@@ -1,10 +1,20 @@
 #
-# The catalogue: every tool nixfs can install, in the group it belongs to.
+# The catalogue, in the two halves a host actually reasons about.
+#
+# `filesystems` is a per-host fact: which on-disk formats does this machine deal with? Nothing can
+# derive it -- the filesystems a host MOUNTS are already handled by NixOS, and the ones it MEETS
+# are a property of what people plug into it, which no config can see. So it is declared.
+#
+# `tools` is not a per-host fact. ddrescue images a failing device, smartctl asks a drive how it is
+# doing, parted edits a partition table, pv shows you whether a six-hour copy is moving. None of
+# that is specific to a filesystem or to a machine's role -- it is the generic storage toolkit, and
+# the honest default is that a machine which touches disks at all has it. Groups default ON;
+# a host that genuinely cannot use them turns them off and says why.
 #
 # ONE COLUMN, NOT TWO. The sibling toolbox module (nixdev) names each tool twice -- once as a
 # nixpkgs attribute and once as a distro package -- because dev tooling is fine, often better,
-# coming from whatever the host distro ships: you want a current compiler, and a version that
-# moved under you between projects is normal.
+# coming from whatever the host distro ships: you want a current compiler, and a version that moved
+# under you between projects is normal.
 #
 # Recovery tooling is the opposite case. You reach for it when something is already broken, under
 # time pressure, usually on media you cannot re-read. That is the worst possible moment to discover
@@ -18,22 +28,20 @@
 #   * ZFS. Its userland must match the loaded kernel module exactly, so it can only come from
 #     whatever provides that module -- `boot.zfs` on NixOS, the distro's own module elsewhere.
 #     Installing a second, independently-versioned copy from here is a real hazard, not a
-#     convenience, and modules/nixfs.nix asserts against asking for it.
+#     convenience, and there is a check that keeps it out.
 #
-#   * Filesystem userland a host gets automatically for the filesystems it MOUNTS. On NixOS that
-#     already happens from `fileSystems.*`; nixfs does not duplicate it. On a non-NixOS host
-#     nothing does it, which is why `filesystems` is still declarable there -- see
-#     modules/nixfs.nix.
+#   * ReiserFS. Removed from nixpkgs after the kernel dropped support in 6.13; there is no package
+#     left to name. Recorded here so its absence reads as a fact rather than an oversight.
 #
-#   * ReiserFS. Removed from nixpkgs after the kernel dropped support in 6.13; there is no
-#     package left to name. Recorded here so its absence reads as a fact rather than an oversight.
-#
-# Each entry names its packages and says what you actually get, because "install e2fsprogs" is not
-# a useful answer to "how do I check this disk" at 3am.
+# Each entry says what you actually get, because "install e2fsprogs" is not a useful answer to
+# "how do I check this disk" at 3am.
 #
 { ... }:
 {
   # ── Per-filesystem check / repair / create / label / resize userland ────────────────────────
+  # Declared per host. On NixOS the filesystems in `fileSystems.*` are already covered by NixOS
+  # itself and nixfs does not duplicate that; declare here what the host MEETS, plus -- on a
+  # non-NixOS host, where nothing does it for you -- what it mounts.
   filesystems = {
     ext = {
       packages = [ "e2fsprogs" ];
@@ -81,88 +89,63 @@
     };
   };
 
-  # ── Block layers that sit BETWEEN a disk and a filesystem ──────────────────────────────────
-  # Separate from `filesystems` because you need these to even FIND the filesystem: a foreign disk
-  # whose ext4 lives inside an LVM volume group inside a LUKS container is unreadable until all
-  # three are open, and only the last of those three is a filesystem question.
-  volumes = {
-    lvm = {
-      packages = [ "lvm2" ];
-      tools = "pvs/vgs/lvs, vgchange -ay to activate a foreign volume group, vgcfgrestore";
+  # ── The generic toolkit: everything that is NOT specific to one on-disk format ─────────────
+  # Each group is one boolean, on by default. A group is the right granularity here because these
+  # travel together in practice -- nobody wants smartctl but not nvme-cli on a box that has both
+  # kinds of drive, and the packages are small next to the cost of not having one.
+  tools = {
+    recovery = {
+      packages = [ "ddrescue" "testdisk" ];
+      summary = "get data off failing or damaged media";
+      detail = ''
+        ddrescue images a dying drive sector-by-sector with a resumable mapfile, so a second pass
+        retries only what the first could not read. testdisk recovers partition tables and boot
+        sectors; photorec (same package) carves files by signature when the filesystem itself is
+        gone. Neither has anything to do with which filesystem is on the device.
+      '';
     };
-    mdraid = {
-      packages = [ "mdadm" ];
-      tools = "mdadm --examine/--assemble -- inspect and bring up a foreign Linux MD array";
-    };
-    luks = {
-      packages = [ "cryptsetup" ];
-      tools = "cryptsetup luksDump/luksOpen, and the header backup you want BEFORE touching anything";
-    };
-  };
 
-  # ── Data recovery from failing or damaged media ────────────────────────────────────────────
-  recovery = {
-    ddrescue = {
-      packages = [ "ddrescue" ];
-      tools = "ddrescue -- image a dying drive sector-by-sector with a resumable mapfile, so a "
-        + "second pass retries only what the first could not read";
+    inspection = {
+      packages = [ "smartmontools" "hdparm" "sdparm" "nvme-cli" "lsscsi" "sg3_utils" "usbutils" "pciutils" ];
+      summary = "ask the hardware what it thinks";
+      detail = ''
+        smartctl reads SMART attributes and the reallocated/pending sector counts that decide
+        whether to image a drive before touching it. hdparm and sdparm read ATA and SCSI/USB
+        parameters; nvme-cli covers NVMe; lsscsi and sg3_utils give device topology and direct
+        SCSI/enclosure queries; lsusb and lspci say what is attached and at what link speed.
+      '';
     };
-    testdisk = {
-      packages = [ "testdisk" ];
-      tools = "testdisk (partition table and boot sector recovery) and photorec (signature-based "
-        + "file carving, for when the filesystem itself is gone)";
-    };
-  };
 
-  # ── Asking the hardware what it thinks ─────────────────────────────────────────────────────
-  inspection = {
-    smart = {
-      packages = [ "smartmontools" ];
-      tools = "smartctl -- SMART attributes, self-tests, and the reallocated/pending sector counts "
-        + "that decide whether to image a drive before touching it";
+    partitioning = {
+      packages = [ "gptfdisk" "parted" ];
+      summary = "read, edit and back up partition tables";
+      detail = ''
+        gdisk/sgdisk/cgdisk for GPT -- including sgdisk --backup, which is the one command worth
+        running before every other command in this list. parted and partprobe for scripted
+        partitioning and forcing the kernel to re-read a table.
+      '';
     };
-    ata = {
-      packages = [ "hdparm" ];
-      tools = "hdparm -- ATA parameters, write cache, APM/AAM, and a timed-read benchmark";
-    };
-    scsi = {
-      packages = [ "sdparm" "lsscsi" "sg3_utils" ];
-      tools = "sdparm (SCSI/USB parameters through SAT passthrough), lsscsi (device topology), "
-        + "sg_inq/sg_ses/sg_scan/sg_readcap (direct SCSI and enclosure queries)";
-    };
-    nvme = {
-      packages = [ "nvme-cli" ];
-      tools = "nvme id-ctrl / smart-log / namespace management";
-    };
-    bus = {
-      packages = [ "usbutils" "pciutils" ];
-      tools = "lsusb and lspci -- what the machine is actually attached to, and at what link speed";
-    };
-  };
 
-  # ── Partition tables ───────────────────────────────────────────────────────────────────────
-  partitioning = {
-    gpt = {
-      packages = [ "gptfdisk" ];
-      tools = "gdisk/sgdisk/cgdisk -- GPT editing, and sgdisk --backup, which is the one command "
-        + "worth running before every other command in this list";
+    volumes = {
+      packages = [ "lvm2" "mdadm" "cryptsetup" ];
+      summary = "open the block layers between a disk and its filesystem";
+      detail = ''
+        A foreign disk whose ext4 lives inside an LVM volume group inside a LUKS container is
+        unreadable until all three are open, and only the last of those three is a filesystem
+        question. vgchange -ay activates a foreign volume group, mdadm --assemble brings up a
+        foreign MD array, cryptsetup luksDump/luksOpen handles the encryption -- and luksHeaderBackup
+        is what you want before touching any of it.
+      '';
     };
-    parted = {
-      packages = [ "parted" ];
-      tools = "parted and partprobe -- scripted partitioning and forcing the kernel to re-read a table";
-    };
-  };
 
-  # ── Watching a long operation, and proving a disk's real speed ─────────────────────────────
-  throughput = {
-    pv = {
-      packages = [ "pv" ];
-      tools = "pv -- progress, rate and ETA for a dd/ddrescue/tar/zfs-send pipe that would "
-        + "otherwise print nothing for six hours";
-    };
-    fio = {
-      packages = [ "fio" ];
-      tools = "fio -- measure what a drive actually delivers, rather than what its label claims";
+    throughput = {
+      packages = [ "pv" "fio" ];
+      summary = "see a long operation move, and measure what a drive really does";
+      detail = ''
+        pv gives progress, rate and ETA for a dd/ddrescue/tar/zfs-send pipe that would otherwise
+        print nothing for six hours. fio measures what a drive actually delivers rather than what
+        its label claims.
+      '';
     };
   };
 }

@@ -1,36 +1,34 @@
 # checks/default.nix
 #
-# EVAL-TIME tests. No VM, no build: each test evaluates a real configuration -- through NixOS's
-# own eval-config.nix on one side and system-manager's own makeSystemConfig on the other -- and
-# inspects what the module RENDERS. Nothing here says anything about a booted machine; the claims
-# under test are about selection, not behaviour, and selection is entirely an eval-time property.
+# EVAL-TIME tests. No VM, no build: each test evaluates a real configuration -- through NixOS's own
+# eval-config.nix on one side and system-manager's own makeSystemConfig on the other -- and inspects
+# what the module RENDERS. Nothing here says anything about a booted machine; the claims under test
+# are about selection, and selection is entirely an eval-time property.
 #
 # The three claims worth failing CI over:
 #
 #   1. The catalogue still resolves. nixpkgs drops packages (ReiserFS tooling went when the kernel
 #      dropped the filesystem). Without this, a tool silently stops being installed and nobody
 #      finds out until a disk is dying.
-#   2. The tiers are monotone. media.nix claims each tier is a strict superset of the one below.
-#      That claim is load-bearing -- it is why moving a host up a tier is a safe edit -- so it is
-#      checked rather than asserted in prose.
-#   3. Both backends agree. nixfs's whole reason to exist is that the toolchain is identical
-#      regardless of the host's distro. If the NixOS and system-manager evaluations of the same
-#      input ever diverge, that claim is false and everything else here is decoration.
+#   2. The defaults are what the module says they are. `tools.*` defaulting ON is the whole shape
+#      of the redesign -- if a group ever silently flipped, hosts would lose their toolkit without
+#      a single line of their own config changing.
+#   3. Both backends agree. nixfs's reason to exist is that the toolchain is identical regardless
+#      of the host's distro. If the NixOS and system-manager evaluations of the same input ever
+#      diverge, that claim is false and everything else here is decoration.
 #
 { pkgs, lib, nixpkgs, system, nixfsModule, systemManagerLib }:
 
 let
   catalogue = import ../lib/catalogue.nix { };
-  mediaData = import ../media.nix;
-  inherit (mediaData) tierOrder;
+  fsNames = lib.attrNames catalogue.filesystems;
+  toolGroups = lib.attrNames catalogue.tools;
 
-  groups = lib.attrNames catalogue;
+  allFsPackages = lib.unique (lib.concatMap (k: catalogue.filesystems.${k}.packages) fsNames);
+  allToolPackages = lib.unique (lib.concatMap (g: catalogue.tools.${g}.packages) toolGroups);
+  allCataloguePackages = lib.unique (allFsPackages ++ allToolPackages);
 
-  # Every package the catalogue can ever name, regardless of tier.
-  allCataloguePackages =
-    lib.unique (lib.concatMap
-      (g: lib.concatMap (k: catalogue.${g}.${k}.packages) (lib.attrNames catalogue.${g}))
-      groups);
+  sorted = lib.sort (a: b: a < b);
 
   # ── NixOS backend ────────────────────────────────────────────────────────────────────────
   evalNixos = extraConfig:
@@ -49,8 +47,8 @@ let
     }).config;
 
   # NixOS enforces assertions when `system.build.toplevel` is forced, not on a bare read of
-  # `config.assertions` (a passive list). `seq` reaches the wrapping throw without deep-forcing
-  # the whole system closure.
+  # `config.assertions` (a passive list). `seq` reaches the wrapping throw without deep-forcing the
+  # whole system closure.
   nixosBuildFails = extraConfig:
     !(builtins.tryEval (builtins.seq (evalNixos extraConfig).system.build.toplevel true)).success;
 
@@ -68,54 +66,65 @@ let
       ];
     }).config;
 
-  smEvalFails = extraConfig:
-    !(builtins.tryEval (builtins.deepSeq (evalSm extraConfig) true)).success;
-
   check = name: ok: detail: { inherit name ok detail; };
 
   # ── Fixtures ─────────────────────────────────────────────────────────────────────────────
-  nixosByTier = lib.genAttrs tierOrder (t: evalNixos { nixfs.media = t; });
-  smByTier = lib.genAttrs tierOrder (t: evalSm { nixfs.media = t; });
+  # The bare case: `enable = true` and nothing else. This is the shape every default claim rests
+  # on, so it is one fixture reused rather than re-derived per test.
+  cfg-bare = evalNixos { };
 
-  namesAt = t: nixosByTier.${t}.nixfs.packageNames;
+  cfg-everything = evalNixos {
+    nixfs.filesystems = fsNames;
+  };
 
-  # A container: no tier contribution at all, but it still mounts something.
-  cfg-container = evalNixos {
-    nixfs.media = "none";
+  # The constrained host: one filesystem, no generic toolkit at all.
+  cfg-minimal = evalNixos {
     nixfs.filesystems = [ "btrfs" ];
+    nixfs.tools = lib.genAttrs toolGroups (_: { enable = false; });
+  };
+
+  # The container: no block devices, so no filesystem userland and no toolkit.
+  cfg-container = evalNixos {
+    nixfs.filesystems = [ ];
+    nixfs.tools = lib.genAttrs toolGroups (_: { enable = false; });
   };
 
   cfg-omit = evalNixos {
-    nixfs.media = "arbitrary";
-    nixfs.omit = [ "filesystems.hfs" ];
+    nixfs.filesystems = fsNames;
+    nixfs.omit = [ "hfsprogs" ];
   };
 
-  # Consecutive tier pairs, for the monotonicity check.
-  tierPairs = lib.zipListsWith (lower: higher: { inherit lower higher; })
-    (lib.init tierOrder)
-    (lib.tail tierOrder);
-
-  monotonicityChecks = map
-    (p:
+  # Turning off exactly one group must remove exactly that group's packages and nothing else.
+  singleGroupOffChecks = map
+    (g:
       let
-        lowerNames = namesAt p.lower;
-        higherNames = namesAt p.higher;
-        lost = lib.filter (n: !(lib.elem n higherNames)) lowerNames;
+        off = evalNixos { nixfs.tools.${g}.enable = false; };
+        removed = lib.filter (p: !(lib.elem p off.nixfs.packageNames)) cfg-bare.nixfs.packageNames;
       in
-      check "tiers-monotone/${p.lower}-subset-of-${p.higher}"
-        (lost == [ ])
-        "moving up a tier DROPPED: ${lib.concatStringsSep ", " lost}")
-    tierPairs;
+      check "tools/${g}-off-removes-exactly-its-packages"
+        (sorted removed == sorted catalogue.tools.${g}.packages)
+        "removed: ${builtins.toJSON (sorted removed)}, expected: ${builtins.toJSON (sorted catalogue.tools.${g}.packages)}")
+    toolGroups;
 
-  # Both backends, same input, same answer -- once per tier.
+  # Both backends, same input, same answer.
   backendParityChecks = map
-    (t: check "backend-parity/${t}"
-      (smByTier.${t}.nixfs.packageNames == nixosByTier.${t}.nixfs.packageNames)
-      ''
-        NixOS:          ${builtins.toJSON nixosByTier.${t}.nixfs.packageNames}
-        system-manager: ${builtins.toJSON smByTier.${t}.nixfs.packageNames}
-      '')
-    tierOrder;
+    (fixture: check "backend-parity/${fixture.name}"
+      (
+        let sm = (evalSm fixture.config).nixfs.packageNames;
+        in sorted sm == sorted (evalNixos fixture.config).nixfs.packageNames
+      )
+      "the two backends resolved different package sets for the same input")
+    [
+      { name = "bare-defaults"; config = { }; }
+      { name = "everything"; config = { nixfs.filesystems = fsNames; }; }
+      {
+        name = "minimal";
+        config = {
+          nixfs.filesystems = [ "btrfs" ];
+          nixfs.tools = lib.genAttrs toolGroups (_: { enable = false; });
+        };
+      }
+    ];
 
   results = [
     # --- 1. the catalogue still resolves ------------------------------------------------
@@ -123,101 +132,97 @@ let
       (lib.all (n: lib.hasAttrByPath (lib.splitString "." n) pkgs) allCataloguePackages)
       "missing from this nixpkgs: ${lib.concatStringsSep ", " (lib.filter (n: !(lib.hasAttrByPath (lib.splitString "." n) pkgs)) allCataloguePackages)}")
 
-    # ZFS userland must track the loaded kernel module, so it can only come from whatever
-    # provides that module. This check exists so that adding it here later is a deliberate,
-    # visible act rather than a plausible-looking one-line addition to the filesystem table.
+    # ZFS userland must track the loaded kernel module, so it can only come from whatever provides
+    # that module. This check exists so that adding it here later is a deliberate, visible act
+    # rather than a plausible-looking one-line addition to the filesystem table.
     (check "catalogue/no-zfs-entry"
-      (!(catalogue.filesystems ? "zfs")
-        && !(lib.elem "zfs" allCataloguePackages)
-        && !(lib.elem "zfstools" allCataloguePackages))
+      (!(catalogue.filesystems ? "zfs") && !(lib.any (p: lib.hasPrefix "zfs" p) allCataloguePackages))
       "the catalogue names ZFS userland; it must come from whatever provides the kernel module (boot.zfs on NixOS), never from here -- see lib/catalogue.nix")
 
-    # --- 2. the tiers are monotone ------------------------------------------------------
-    # (per-pair checks appended below)
+    # --- 2. the defaults are what the module says ---------------------------------------
+    # `tools.*` defaults ON. This is the redesign's central claim: the generic toolkit is not a
+    # per-host judgment call, so a host gets it without asking.
+    (check "defaults/bare-enable-gives-the-whole-toolkit"
+      (sorted cfg-bare.nixfs.packageNames == sorted allToolPackages)
+      "got: ${builtins.toJSON (sorted cfg-bare.nixfs.packageNames)}, expected exactly the tool groups: ${builtins.toJSON (sorted allToolPackages)}")
 
-    # The top tier is the whole catalogue. Without this, an entry could be added to
-    # lib/catalogue.nix and reachable from no tier at all -- selectable in principle,
-    # installed nowhere, and never noticed.
-    (check "tiers/arbitrary-covers-the-whole-catalogue"
-      (lib.sort (a: b: a < b) (namesAt "arbitrary") == lib.sort (a: b: a < b) allCataloguePackages)
-      "unreachable from any tier: ${lib.concatStringsSep ", " (lib.filter (n: !(lib.elem n (namesAt "arbitrary"))) allCataloguePackages)}")
+    # ...and NO filesystem userland, because which formats a host deals with cannot be guessed.
+    (check "defaults/bare-enable-gives-no-filesystem-userland"
+      (!(lib.any (p: lib.elem p allFsPackages) cfg-bare.nixfs.packageNames))
+      "got filesystem packages without any being declared: ${builtins.toJSON (lib.filter (p: lib.elem p allFsPackages) cfg-bare.nixfs.packageNames)}")
 
-    (check "tiers/none-contributes-nothing"
-      (namesAt "none" == [ ])
-      "got: ${builtins.toJSON (namesAt "none")}")
+    # --- 3. filesystems are additive and exact ------------------------------------------
+    (check "filesystems/declared-set-is-added-exactly"
+      (
+        let extra = lib.filter (p: !(lib.elem p cfg-bare.nixfs.packageNames)) cfg-minimal.nixfs.packageNames;
+        in sorted extra == sorted catalogue.filesystems.btrfs.packages
+      )
+      "got: ${builtins.toJSON (sorted cfg-minimal.nixfs.packageNames)}")
 
-    # A container declares what it mounts and gets exactly that -- the archetypal `none` host,
-    # and the case that motivated making `filesystems` additive on top of the tier rather than
-    # part of it.
-    (check "tiers/none-plus-explicit-filesystem"
-      (cfg-container.nixfs.packageNames == [ "btrfs-progs" ])
+    (check "filesystems/all-of-them-covers-every-catalogue-entry"
+      (sorted cfg-everything.nixfs.packageNames == sorted allCataloguePackages)
+      "unreachable: ${builtins.toJSON (lib.filter (p: !(lib.elem p cfg-everything.nixfs.packageNames)) allCataloguePackages)}")
+
+    # A multi-package filesystem entry must contribute all of its packages, not just the first --
+    # vfat is the only entry with more than one, so it is the only thing standing between the
+    # module and silently dropping mtools.
+    (check "filesystems/multi-package-entry-contributes-all"
+      (
+        let cfg = evalNixos { nixfs.filesystems = [ "vfat" ]; };
+        in lib.all (p: lib.elem p cfg.nixfs.packageNames) [ "dosfstools" "mtools" ]
+      )
+      "vfat did not contribute both dosfstools and mtools")
+
+    # --- 4. the constrained cases resolve to what they claim ----------------------------
+    (check "constrained/one-filesystem-no-toolkit"
+      (cfg-minimal.nixfs.packageNames == [ "btrfs-progs" ])
+      "got: ${builtins.toJSON cfg-minimal.nixfs.packageNames}")
+
+    (check "constrained/container-gets-nothing"
+      (cfg-container.nixfs.packageNames == [ ])
       "got: ${builtins.toJSON cfg-container.nixfs.packageNames}")
 
-    (check "tiers/fixed-has-drive-health-but-no-recovery"
-      (lib.elem "smartmontools" (namesAt "fixed")
-        && !(lib.elem "ddrescue" (namesAt "fixed"))
-        && !(lib.elem "testdisk" (namesAt "fixed")))
-      "got: ${builtins.toJSON (namesAt "fixed")}")
-
-    # Recovery sits at `removable`, not `arbitrary`, on the reasoning in media.nix: the moment
-    # someone hands you a dying stick is the moment you need ddrescue, and that happens on any
-    # machine people plug things into -- not only on an ingest host.
-    (check "tiers/removable-has-recovery"
-      (lib.all (n: lib.elem n (namesAt "removable")) [ "ddrescue" "testdisk" "ntfs3g" "exfatprogs" "dosfstools" ])
-      "got: ${builtins.toJSON (namesAt "removable")}")
-
-    (check "tiers/arbitrary-has-the-legacy-formats"
-      (lib.all (n: lib.elem n (namesAt "arbitrary")) [ "hfsprogs" "udftools" "jfsutils" "nilfs-utils" ])
-      "got: ${builtins.toJSON (namesAt "arbitrary")}")
-
-    # --- 3. the resolved selection reaches environment.systemPackages -------------------
-    # packageNames is a computed contract; this is the check that it is actually WIRED, on the
-    # backend where a mistake would be least visible.
+    # --- 5. the resolved selection reaches environment.systemPackages -------------------
+    # packageNames is a computed contract; this is the check that it is actually WIRED.
     (check "install/packages-reach-environment-systemPackages"
       (lib.all
-        (n: lib.elem (lib.getAttrFromPath (lib.splitString "." n) pkgs) nixosByTier.arbitrary.environment.systemPackages)
-        (namesAt "arbitrary"))
+        (n: lib.elem (lib.getAttrFromPath (lib.splitString "." n) pkgs) cfg-everything.environment.systemPackages)
+        cfg-everything.nixfs.packageNames)
       "environment.systemPackages does not contain every resolved package")
 
     (check "install/disabled-installs-nothing"
       (
-        let cfg = evalNixos { nixfs.enable = lib.mkForce false; nixfs.media = "arbitrary"; };
+        let cfg = evalNixos { nixfs.enable = lib.mkForce false; nixfs.filesystems = fsNames; };
         in !(lib.elem pkgs.ddrescue cfg.environment.systemPackages)
+          && !(lib.elem pkgs.hfsprogs cfg.environment.systemPackages)
       )
       "nixfs.enable = false still installed the toolchain")
 
-    # --- 4. the failure modes actually fail --------------------------------------------
-    (check "media-unset/nixos-build-fails"
-      (nixosBuildFails { nixfs.media = null; })
-      "expected forcing system.build.toplevel to fail with media unset, but it succeeded")
-
-    (check "media-unset/system-manager-eval-fails"
-      (smEvalFails { nixfs.media = null; })
-      "expected makeSystemConfig to throw with media unset, but it succeeded")
-
-    (check "omit-unknown-key/build-fails"
-      (nixosBuildFails { nixfs.media = "fixed"; nixfs.omit = [ "filesystems.hfsplus" ]; })
-      "expected a typo'd omit key to fail the build, but it succeeded")
-
-    (check "omit-unknown-key/group-typo-also-fails"
-      (nixosBuildFails { nixfs.media = "fixed"; nixfs.omit = [ "filesystem.hfs" ]; })
-      "expected a typo'd omit GROUP to fail the build, but it succeeded")
-
-    # --- 5. omit removes, and says so ---------------------------------------------------
+    # --- 6. omit removes, says so, and cannot rot ---------------------------------------
     (check "omit/removes-the-package"
       (!(lib.elem "hfsprogs" cfg-omit.nixfs.packageNames)
         && lib.elem "udftools" cfg-omit.nixfs.packageNames)
       "got: ${builtins.toJSON cfg-omit.nixfs.packageNames}")
 
     (check "omit/warns-that-the-host-diverges"
-      (lib.any (w: lib.hasInfix "filesystems.hfs" w) cfg-omit.warnings)
+      (lib.any (w: lib.hasInfix "hfsprogs" w) cfg-omit.warnings)
       "warnings: ${builtins.toJSON cfg-omit.warnings}")
 
     (check "omit/silent-when-empty"
-      (nixosByTier.arbitrary.warnings == [ ])
-      "warnings: ${builtins.toJSON nixosByTier.arbitrary.warnings}")
+      (cfg-everything.warnings == [ ])
+      "warnings: ${builtins.toJSON cfg-everything.warnings}")
+
+    # An omission for something this host was never going to install is a stale or typo'd entry;
+    # either way it removes nothing while looking like it does.
+    (check "omit/stale-entry-fails-the-build"
+      (nixosBuildFails { nixfs.filesystems = [ "btrfs" ]; nixfs.omit = [ "hfsprogs" ]; })
+      "expected an omission for a package this host never installs to fail the build, but it succeeded")
+
+    (check "omit/typo-fails-the-build"
+      (nixosBuildFails { nixfs.filesystems = fsNames; nixfs.omit = [ "hfsprog" ]; })
+      "expected a typo'd omit entry to fail the build, but it succeeded")
   ]
-  ++ monotonicityChecks
+  ++ singleGroupOffChecks
   ++ backendParityChecks;
 
   failed = builtins.filter (r: !r.ok) results;

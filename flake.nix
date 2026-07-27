@@ -38,10 +38,15 @@
       systemManagerModules.nixfs = ./modules/install.nix;
       systemManagerModules.default = self.systemManagerModules.nixfs;
 
-      # The catalogue and the tier table, exposed so a consumer can inspect or validate them
-      # without re-reading the files.
+      # The catalogue, exposed so a consumer can inspect or validate it without re-reading the file.
       lib.catalogue = import ./lib/catalogue.nix { };
-      lib.media = import ./media.nix;
+
+      # Every filesystem the catalogue knows, for the hosts that want the lot. Exported rather
+      # than left to each consumer to hand-copy, so a format added here reaches them on the next
+      # lock bump instead of silently missing from a list somebody typed once:
+      #
+      #   nixfs.filesystems = inputs.nixfs.lib.allFilesystems;
+      lib.allFilesystems = lib.attrNames (import ./lib/catalogue.nix { }).filesystems;
 
       checks = forAllSystems (system:
         import ./checks {

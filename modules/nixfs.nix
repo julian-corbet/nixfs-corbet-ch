@@ -1,9 +1,9 @@
 #
-# nixfs -- the filesystem toolchain, declared per host.
+# nixfs -- the storage toolchain, declared per host.
 #
 # THE GAP THIS CLOSES. NixOS installs check/repair userland for the filesystems a host MOUNTS,
 # derived from `fileSystems.*`. Nothing installs userland for the filesystems a host MEETS: a USB
-# stick, a disk pulled out of a retired machine, an SD card someone hands you. And on a host whose
+# stick, a disk pulled from a retired machine, an SD card someone hands you. And on a host whose
 # own distro is not NixOS, nothing installs either kind -- those tools arrive by hand, at whatever
 # version the distro shipped the day somebody remembered, or they never arrive at all.
 #
@@ -11,153 +11,122 @@
 # you need them. nixfs makes the answer a declared fact instead, resolved from nixpkgs on every
 # host regardless of distro, so the toolchain is pinned and identical everywhere.
 #
+# TWO HALVES, BECAUSE THEY ARE TWO DIFFERENT QUESTIONS.
+#
+#   `filesystems` is a per-host fact and has to be declared. Which on-disk formats this machine
+#   deals with cannot be derived: what it mounts is already NixOS's job, and what it MEETS is a
+#   property of what people plug into it, which no configuration can see.
+#
+#   `tools.*` is not a per-host fact. Imaging a failing device, asking a drive for its SMART
+#   counters, editing a partition table, watching a long copy move -- none of that is specific to
+#   an on-disk format or to a machine's role. It is the generic storage toolkit, so every group
+#   defaults ON and a host that genuinely cannot use one turns it off with a reason.
+#
+# An earlier version of this module collapsed both into a single four-value "media exposure" tier.
+# That was wrong: it made "which filesystems" and "which tools" move together when they are
+# independent, and it forced a host to describe itself with one word chosen from a taxonomy
+# invented here, rather than state the two things it actually knows.
+#
 # PLATFORM-NEUTRAL BY DESIGN. This file declares WHAT is wanted and resolves it to nixpkgs
 # attribute names. It installs nothing -- see modules/install.nix, which is imported by both
 # backends because, unlike a distro-package module, there is nothing platform-specific left to do.
-#
-# EVAL SAFETY. `nixfs.media` has no default and may legitimately be null while this module is
-# still being evaluated -- a NixOS toplevel build forces most of `config` in one pass, in no
-# guaranteed relation to when `assertions` are checked. So no lookup below ever indexes the tier
-# table with `cfg.media` directly; `activeTier` falls back to the lowest tier when it is null. That
-# fallback is never seen by a real configuration: `config` is gated on `cfg.enable`, and the
-# assertion fires whenever enable is true and media is null. It exists only so that forcing an
-# unrelated attribute cannot crash before the readable error gets to speak.
 #
 { config, lib, ... }:
 
 let
   cfg = config.nixfs;
   catalogue = import ../lib/catalogue.nix { };
-  mediaData = import ../media.nix;
-  inherit (mediaData) tierOrder adds;
 
-  # The groups, in the order they are reported. Derived from the catalogue rather than written
-  # out, so adding a group to lib/catalogue.nix cannot leave this list behind.
-  groups = lib.attrNames catalogue;
+  fsNames = lib.attrNames catalogue.filesystems;
+  toolGroups = lib.attrNames catalogue.tools;
 
-  activeTierName = if cfg.media != null then cfg.media else lib.head tierOrder;
+  selectedFsPackages =
+    lib.concatMap (k: catalogue.filesystems.${k}.packages) cfg.filesystems;
 
-  # Every tier up to and including the active one. This is where "monotone" stops being a claim
-  # in media.nix and becomes arithmetic: a tier can only contribute additions, so a higher tier
-  # is necessarily a superset.
-  tiersUpTo = name:
-    let idx = lib.lists.findFirstIndex (t: t == name) 0 tierOrder;
-    in lib.take (idx + 1) tierOrder;
+  enabledGroups = lib.filter (g: cfg.tools.${g}.enable) toolGroups;
 
-  fromTier = group:
-    lib.concatMap (t: adds.${t}.${group} or [ ]) (tiersUpTo activeTierName);
+  selectedToolPackages =
+    lib.concatMap (g: catalogue.tools.${g}.packages) enabledGroups;
 
-  # "group.key" as written in `nixfs.omit`.
-  omitKey = group: key: "${group}.${key}";
+  wanted = lib.unique (selectedFsPackages ++ selectedToolPackages);
 
-  selectedIn = group:
-    lib.filter (k: !(lib.elem (omitKey group k) cfg.omit))
-      (lib.unique (fromTier group ++ cfg.${group}));
+  resolved = lib.filter (p: !(lib.elem p cfg.omit)) wanted;
 
-  selected = lib.genAttrs groups selectedIn;
+  unknownOmissions = lib.filter (o: !(lib.elem o wanted)) cfg.omit;
 
-  # What the tier would have given that `omit` took away -- surfaced, never silent.
-  omittedFromTier =
-    lib.filter (o: lib.elem o (lib.concatMap (g: map (omitKey g) (lib.unique (fromTier g ++ cfg.${g}))) groups))
-      cfg.omit;
+  mkToolOption = group: {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        ${catalogue.tools.${group}.summary}.
 
-  allCatalogueKeys =
-    lib.concatMap (g: map (omitKey g) (lib.attrNames catalogue.${g})) groups;
+        ${catalogue.tools.${group}.detail}
+        Packages: ${lib.concatStringsSep ", " catalogue.tools.${group}.packages}.
 
-  unknownOmissions = lib.filter (o: !(lib.elem o allCatalogueKeys)) cfg.omit;
-
-  mkGroupOption = group: lib.mkOption {
-    type = lib.types.listOf (lib.types.enum (lib.attrNames catalogue.${group}));
-    default = [ ];
-    description = ''
-      Additional ${group} entries for this host, on top of whatever `nixfs.media` already
-      provides. Additive only; use `nixfs.omit` to take something away.
-
-      Available: ${lib.concatStringsSep ", " (lib.attrNames catalogue.${group})}.
-    '';
+        On by default. This is the generic storage toolkit -- it is not specific to any on-disk
+        format or to what this machine is for -- so the question a host answers here is not "do I
+        want this" but "can I actually use it". Turn it off where the answer is genuinely no (a
+        container with no block devices of its own, a guest whose virtual disk has no SMART data
+        to report, a machine small enough that the closure matters), and say why in the host's
+        config so the next reader does not have to guess.
+      '';
+    };
   };
 in
 {
   options.nixfs = {
-    enable = lib.mkEnableOption "the filesystem, block-layer and recovery toolchain, pinned from nixpkgs on every host regardless of distro";
+    enable = lib.mkEnableOption "the storage toolchain -- per-filesystem userland plus the generic recovery/inspection/partitioning toolkit, pinned from nixpkgs on every host regardless of distro";
 
-    media = lib.mkOption {
-      type = lib.types.nullOr (lib.types.enum tierOrder);
-      default = null;
-      example = "removable";
+    filesystems = lib.mkOption {
+      type = lib.types.listOf (lib.types.enum fsNames);
+      default = [ ];
+      example = [ "btrfs" "vfat" "exfat" "ntfs" ];
       description = ''
-        What kinds of storage this host is expected to encounter. One of:
-        ${lib.concatStringsSep ", " tierOrder}.
+        Which on-disk formats this host needs userland for.
 
-        - `none`       : no block devices of its own (a container, or a guest handed one virtual
-                         disk it never inspects). Contributes no tools at all; declare
-                         `nixfs.filesystems` for whatever it does mount.
-        - `fixed`      : owns its disks, never sees foreign media. Drive health, partitioning,
-                         and reopening its own encryption.
-        - `removable`  : people plug things into it. Adds the formats consumer devices ship with,
-                         the block layers a foreign Linux disk hides its filesystem under, and
-                         data recovery.
-        - `arbitrary`  : media of unknown, possibly ancient format arrives to be ingested.
-                         Everything, including the formats nothing creates anymore -- which is
-                         precisely why they turn up on old disks.
+        Declare what the host MEETS -- media people plug into it, disks pulled from other
+        machines -- because nothing can derive that. On NixOS you usually do NOT need to list what
+        it mounts: userland for anything in `fileSystems.*` is already installed for you, and nixfs
+        does not duplicate it. On a host whose own distro is not NixOS nothing does that either, so
+        list what it mounts here as well.
 
-        Each tier is a strict superset of the one before it, by construction rather than by
-        promise -- see media.nix.
+        Empty is a legitimate answer, and it is the right one for a machine that owns no block
+        devices: a container sees whatever its host mounted for it, and repair tooling inside it
+        would be acting on disks that are not its to touch.
 
-        There is NO default. A guess here is silently wrong in the direction that matters: too low
-        a tier installs nothing and looks fine right up until the moment the tools are needed. So
-        an unset `media` with `enable = true` is a hard evaluation error, not a fallback.
-      '';
-    };
+        For every format at once, use the flake's own list rather than copying one:
 
-    filesystems = mkGroupOption "filesystems" // {
-      description = ''
-        Filesystem userland this host needs beyond its tier -- normally the filesystems it
-        actually MOUNTS, which the tier deliberately says nothing about.
-
-        On NixOS this is usually unnecessary: userland for anything in `fileSystems.*` is already
-        installed for you, and nixfs does not duplicate that. On a host whose own distro is not
-        NixOS nothing does it, so declare them here.
+            nixfs.filesystems = inputs.nixfs.lib.allFilesystems;
 
         ZFS is deliberately absent from the list and always will be. Its userland must match the
-        loaded kernel module exactly, so it can only come from whatever provides that module
-        (`boot.zfs` on NixOS, the distro's own packaging elsewhere). A second, independently
-        versioned copy installed from here would be a hazard, not a convenience.
+        loaded kernel module, so it can only come from whatever provides that module (`boot.zfs` on
+        NixOS, the distro's own packaging elsewhere). A second, independently versioned copy
+        installed from here would be a hazard, not a convenience.
 
-        Available: ${lib.concatStringsSep ", " (lib.attrNames catalogue.filesystems)}.
+        Available: ${lib.concatStringsSep ", " fsNames}.
       '';
     };
 
-    volumes = mkGroupOption "volumes";
-    recovery = mkGroupOption "recovery";
-    inspection = mkGroupOption "inspection";
-    partitioning = mkGroupOption "partitioning";
-    throughput = mkGroupOption "throughput";
+    tools = lib.genAttrs toolGroups mkToolOption;
 
     omit = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
-      example = [ "filesystems.hfs" ];
+      example = [ "hfsprogs" ];
       description = ''
-        Escape hatch: drop specific catalogue entries this host would otherwise get, written as
-        `"<group>.<key>"`.
+        Escape hatch: drop specific nixpkgs packages this host would otherwise get.
 
-        Prefer changing `nixfs.media`, or changing what a tier contains. This exists for one
-        honest case -- a package that is broken or marked insecure in the pinned nixpkgs, where
-        the alternative is that the host cannot build at all -- and it is reported in `warnings`
-        every time, because a host quietly missing part of its recovery toolchain is the exact
-        situation nixfs exists to prevent. An entry naming something not in the catalogue is an
-        error, so a typo cannot silently omit nothing.
+        Prefer changing `filesystems` or turning off a `tools.*` group -- those say something true
+        about the host. This exists for one honest case: a package broken or marked insecure in the
+        pinned nixpkgs, where the alternative is that the host cannot build at all. It is reported
+        in `warnings` every time, because a host quietly missing part of its toolchain is the exact
+        situation nixfs exists to prevent. An entry naming a package this host was not going to get
+        anyway is an error, so a stale omission cannot sit in a config looking meaningful.
       '';
     };
 
     # ── Computed, read-only ────────────────────────────────────────────────────────────────
-    selected = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.listOf lib.types.str);
-      readOnly = true;
-      description = "Per group, the catalogue keys resolved for this host (tier + explicit, minus omissions).";
-    };
-
     packageNames = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       readOnly = true;
@@ -170,39 +139,27 @@ in
   };
 
   config = {
-    nixfs.selected = selected;
-    nixfs.packageNames =
-      lib.unique (lib.concatMap
-        (g: lib.concatMap (k: catalogue.${g}.${k}.packages) selected.${g})
-        groups);
+    nixfs.packageNames = resolved;
 
     assertions = [
       {
-        assertion = !cfg.enable || cfg.media != null;
-        message = ''
-          nixfs.media must be set explicitly when nixfs.enable = true. It cannot be inferred:
-          what storage a machine encounters is a fact about how it is used, not about its
-          hardware or its config. Pick the lowest tier that is still true of this host --
-          ${lib.concatStringsSep " < " tierOrder} -- and see media.nix for what each contributes.
-        '';
-      }
-      {
         assertion = unknownOmissions == [ ];
         message = ''
-          nixfs.omit names ${toString (builtins.length unknownOmissions)} entr(y/ies) that are not
-          in the catalogue: ${lib.concatStringsSep ", " unknownOmissions}. An omission that
-          matches nothing removes nothing while looking like it did. Write them as
-          "<group>.<key>", e.g. "filesystems.hfs".
+          nixfs.omit names ${toString (builtins.length unknownOmissions)} package(s) this host was
+          not going to install anyway: ${lib.concatStringsSep ", " unknownOmissions}. An omission
+          that removes nothing while looking like it does is worse than no omission at all --
+          either the name is a typo, or whatever used to pull it in is gone and the entry should
+          be too. Omit takes nixpkgs attribute names, e.g. "hfsprogs".
         '';
       }
     ];
 
-    warnings = lib.optional (omittedFromTier != [ ]) ''
-      nixfs: this host omits ${toString (builtins.length omittedFromTier)} entr(y/ies) its
-      media tier "${activeTierName}" would otherwise provide: ${lib.concatStringsSep ", " omittedFromTier}.
-      Its toolchain is therefore NOT identical to other hosts at the same tier. This warning is
-      deliberate and will not go away on its own -- remove the omission once whatever forced it
-      (a broken or insecure package in the pinned nixpkgs) is resolved upstream.
+    warnings = lib.optional (cfg.enable && cfg.omit != [ ]) ''
+      nixfs: this host omits ${toString (builtins.length cfg.omit)} package(s) it would otherwise
+      install: ${lib.concatStringsSep ", " cfg.omit}. Its toolchain is therefore NOT what its own
+      declaration says. This warning is deliberate and will not go away on its own -- remove the
+      omission once whatever forced it (a broken or insecure package in the pinned nixpkgs) is
+      resolved upstream.
     '';
   };
 }
