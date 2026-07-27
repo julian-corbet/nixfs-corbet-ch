@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>nixfs &mdash; the filesystem, block-layer and recovery toolchain, one fact per host</title>
+  <meta name="description" content="nixfs declares the filesystem, block-layer and recovery toolchain as one fact per host: nixfs.media = none | fixed | removable | arbitrary. Resolved from nixpkgs on NixOS and non-NixOS hosts alike, so the tools you reach for when a disk is failing are pinned and identical everywhere.">
+
+  <meta name="theme-color" content="#0b1120" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+
+  <meta property="og:title" content="nixfs">
+  <meta property="og:description" content="The filesystem, block-layer and recovery toolchain as one declared fact per host, resolved from nixpkgs on NixOS and non-NixOS hosts alike.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://nixfs.corbet.ch">
+  <meta name="twitter:card" content="summary">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="https://v1.foss.design.corbet.ch/assets/base.css">
+  <link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+
+<header class="hero">
+  <nav>
+    <a href="/" class="nav-brand">nixfs</a>
+    <div class="nav-links">
+      <a href="#tiers" class="nav-anchor">tiers</a>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch#readme">Docs</a>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch">GitHub</a>
+      <a href="#install" class="btn-nav">Install</a>
+      <details class="nav-family">
+        <summary>nix* family</summary>
+        <nav class="nav-family-panel" aria-label="The nix* project family">
+          <a href="https://nixapps.corbet.ch">nixapps <span>cluster apps as typed Nix</span></a>
+          <a href="https://nixarch.corbet.ch">nixarch <span>Arch's AUR breadth, Nix's declarative config</span></a>
+          <a href="https://nixbackup.corbet.ch">nixbackup <span>verify the backup, not the exit code</span></a>
+          <a href="https://nixfs.corbet.ch" aria-current="page">nixfs <span>the recovery toolchain, pinned everywhere</span></a>
+          <a href="https://nixgpu.corbet.ch">nixgpu <span>share one GPU by priority</span></a>
+          <a href="https://nixk3s.corbet.ch">nixk3s <span>the host is a flake, the cluster is git</span></a>
+          <a href="https://nixllm.corbet.ch">nixllm <span>the model store IS the registry</span></a>
+          <a href="https://nixnas.corbet.ch">nixnas <span>declarative NAS on a USB stick</span></a>
+          <a href="https://nixnet.corbet.ch">nixnet <span>the best live path to a host</span></a>
+          <a href="https://nixpush.corbet.ch">nixpush <span>one send call, any notification backend</span></a>
+          <a href="https://nixram.corbet.ch">nixram <span>RAM tuning that fits your machine</span></a>
+          <a href="https://nixremote.corbet.ch">nixremote <span>remote apps as real windows</span></a>
+          <a href="https://nixsh.corbet.ch">nixsh <span>every shell on every machine, declared</span></a>
+          <a href="https://nixshare.corbet.ch">nixshare <span>NFS/CIFS shares that unstick themselves</span></a>
+          <a href="https://nixvibe.corbet.ch">nixvibe <span>a coding agent in a browser terminal</span></a>
+          <a href="https://nixvps.corbet.ch">nixvps <span>NixOS on sub-1GB VPSes</span></a>
+        </nav>
+      </details>
+    </div>
+  </nav>
+
+  <div class="hero-content">
+    <h1>nixfs</h1>
+    <p class="tagline">Tell it what storage the host meets. It resolves the toolchain &mdash; pinned, identical, on any distro.</p>
+    <p class="subtitle">A NixOS module that declares the filesystem, block-layer and recovery toolchain as one fact per host: <code>nixfs.media</code>. NixOS already installs check/repair userland for the filesystems a host <strong>mounts</strong>. Nothing installs userland for the filesystems a host <strong>meets</strong> &mdash; a USB stick handed to it, a disk pulled from a retired machine, an SD card of unknown origin &mdash; and on a host whose own distro is not NixOS, nothing installs either kind. nixfs closes both halves by resolving to nixpkgs everywhere, so the tools you reach for when a disk is failing are pinned and identical no matter which box you're standing at.</p>
+    <div class="cta">
+      <a href="#install" class="btn btn-primary">Get started</a>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch" class="btn btn-secondary">View on GitHub</a>
+    </div>
+  </div>
+
+  <div class="hero-demo">
+    <div class="terminal">
+      <div class="terminal-header">
+        <div class="terminal-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <span class="terminal-title">nixfs &mdash; declaring media on a host that meets removable drives</span>
+      </div>
+      <pre class="terminal-body"><code><span class="prompt">$</span> nixos-rebuild switch
+<span class="output">error: Failed assertions:
+  - nixfs.media must be set explicitly when nixfs.enable = true. It cannot be
+    inferred: what storage a machine encounters is a fact about how it is
+    used, not about its hardware or its config. Pick the lowest tier that is
+    still true of this host -- none &lt; fixed &lt; removable &lt; arbitrary.</span>
+
+<span class="prompt">$</span> $EDITOR configuration.nix
+<span class="output">  imports = [ inputs.nixfs.nixosModules.default ];
+
+  nixfs = {
+    enable = true;
+    media = "removable";
+  };</span>
+
+<span class="prompt">$</span> nix eval .#nixosConfigurations.host.config.nixfs.packageNames
+<span class="output">[ "dosfstools" "mtools" "exfatprogs" "ntfs3g" "cryptsetup" "lvm2" "mdadm"
+  "ddrescue" "testdisk" "smartmontools" "hdparm" "nvme-cli" "usbutils"
+  "pciutils" "gptfdisk" "parted" ]</span>
+
+<span class="prompt">$</span> nixos-rebuild switch
+<span class="output">...done. All sixteen now on this host's PATH -- cumulative from `fixed`
+too, since tiers accumulate.</span></code></pre>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<section class="problem">
+  <div class="container">
+    <h2>The problem</h2>
+    <div class="prose">
+      <p>NixOS already solves half of this. Anything named in <code>fileSystems.*</code> gets its check-and-repair userland installed automatically, derived from what the host actually mounts. That part works, and nixfs deliberately does not duplicate it.</p>
+      <p>Nothing installs userland for the filesystems a host <strong>meets</strong> rather than mounts: a USB stick handed to it, a disk pulled from a retired machine, an SD card of unknown origin. And on a host whose own distro is not NixOS, nothing installs either kind &mdash; those tools arrive by hand, at whatever version the distro shipped the day somebody remembered, or they never arrive at all. <strong>Both halves are the same failure, and it is the worst-shaped one there is: you discover which tools are missing at the exact moment you need them.</strong></p>
+    </div>
+  </div>
+</section>
+
+<section class="how-it-works">
+  <div class="container">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Declare what the host meets</h3>
+        <p><code>nixfs.media</code> answers a single question: what kinds of storage does this machine encounter? One of <code>none</code>, <code>fixed</code>, <code>removable</code>, <code>arbitrary</code>. There is no default &mdash; a guess is silently wrong in the direction that matters, since too low a tier installs nothing and looks fine right up until the tools are needed.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>The catalogue resolves it</h3>
+        <p>Every tier up to and including the chosen one contributes its additions; <code>nixfs.filesystems</code>, <code>volumes</code>, <code>recovery</code>, <code>inspection</code>, <code>partitioning</code> and <code>throughput</code> layer on top for anything the tier doesn't cover. The result lands in the read-only <code>nixfs.packageNames</code> &mdash; the whole contract, inspectable before anything builds.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>One file installs it, on either backend</h3>
+        <p><code>modules/install.nix</code> resolves every name against <em>this host's own</em> <code>pkgs</code> and writes <code>environment.systemPackages</code>. It is exported unchanged as both <code>nixosModules.default</code> and <code>systemManagerModules.default</code> &mdash; there is no platform-specific installer to write.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="tiers" class="levels">
+  <div class="container">
+    <h2>Find your host's tier</h2>
+    <div class="prose">
+      <p>Every other way of slicing this turned out to be a proxy for one question: what kinds of storage does this machine encounter? A server that ingests old drives and a server that only ever sees its own NVMe want completely different toolchains, and calling both "server" hides that &mdash; so the tier is named after the exposure itself.</p>
+    </div>
+
+    <ul class="level-chips" aria-label="The four nixfs media tiers">
+      <li>none</li><li>fixed</li><li>removable</li><li>arbitrary</li>
+    </ul>
+
+    <div class="table-scroll">
+      <table class="level-table">
+        <thead>
+          <tr>
+            <th scope="col">Tier</th>
+            <th scope="col">What it means</th>
+            <th scope="col">What it adds</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">none</th>
+            <td>No block devices of its own &mdash; a container, or a guest handed one virtual disk it never inspects.</td>
+            <td>Nothing. Declare <code>nixfs.filesystems</code> for whatever it does mount.</td>
+          </tr>
+          <tr>
+            <th scope="row">fixed</th>
+            <td>Owns its disks; nothing foreign is ever plugged in.</td>
+            <td>Drive health (SMART, ATA, NVMe, bus topology), GPT/parted partitioning, LUKS to reopen its own encryption.</td>
+          </tr>
+          <tr>
+            <th scope="row">removable</th>
+            <td>People plug things into it.</td>
+            <td>The formats consumer devices ship with (FAT, exFAT, NTFS), the block layers a foreign Linux disk hides its filesystem under (LVM, mdraid), and data recovery (ddrescue, testdisk).</td>
+          </tr>
+          <tr>
+            <th scope="row">arbitrary</th>
+            <td>Media of unknown, possibly ancient format arrives to be ingested.</td>
+            <td>Everything &mdash; including the formats nothing creates today, which is precisely why they turn up on old disks: ext, XFS, btrfs, F2FS, HFS+, UDF, JFS, NILFS2, plus SCSI/enclosure inspection and throughput tools.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <p>Each tier is a strict superset of the one below it <strong>by construction, not by promise</strong>: a tier can only declare what it <em>adds</em>, and the cumulative set is computed. There is no way to write "remove" here, so moving a host up a tier can only ever grow its toolchain. CI checks it anyway, at every consecutive pair.</p>
+      <p>A host's own mounts are a separate axis. <code>nixfs.filesystems</code> is additive on top of whichever tier you pick, for the case the tier says nothing about: a container that mounts btrfs and meets nothing is <code>media = "none"</code> plus <code>filesystems = [ "btrfs" ]</code>, and gets exactly that.</p>
+    </div>
+  </div>
+</section>
+
+<section class="architecture band">
+  <div class="container">
+    <h2>Architecture</h2>
+    <div class="prose">
+      <p>Six groups, twenty-five catalogue entries, resolving to twenty-nine nixpkgs packages at the top tier. One path turns a tier into an installed toolchain, and it is the same path on either backend.</p>
+    </div>
+
+    <pre class="arch-diagram" role="img" aria-label="nixfs.media picks a tier; tiers accumulate through lib/catalogue.nix into the read-only nixfs.packageNames; the same modules/install.nix resolves those names against this host's own nixpkgs and writes environment.systemPackages, whether the backend is nixosModules.default or systemManagerModules.default."><code>  nixfs.media = "removable"        a host that meets USB sticks, SD cards, foreign drives
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  TIER          none  &lt;  fixed  &lt;  removable  &lt;  arbitrary   │
+  │                                                             │
+  │  Each tier declares only what it ADDS. media.nix has no     │
+  │  way to write "remove" -- climbing a tier only grows it.    │
+  └─────────────────────────────────────────────────────────────┘
+                        │  accumulated by lib/catalogue.nix
+                        ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  nixfs.packageNames        read-only, the whole contract    │
+  │                                                             │
+  │  ntfs3g, exfatprogs, dosfstools, mtools, lvm2, mdadm,       │
+  │  ddrescue, testdisk, ...                                    │
+  └─────────────────────────────────────────────────────────────┘
+                        │
+            ┌───────────┴───────────┐
+            ▼                       ▼
+  nixosModules.default      systemManagerModules.default
+     (a NixOS host)          (a non-NixOS host, via system-manager)
+            │                       │
+            └───────────┬───────────┘
+                         │  the SAME modules/install.nix, resolved
+                         ▼  against THIS host's own nixpkgs
+              environment.systemPackages
+
+  A name missing from this host's nixpkgs is a build failure, not a
+  silent gap -- see below.</code></pre>
+
+    <div class="arch-details">
+      <div class="arch-detail">
+        <h3>One file, because there is nothing left to differ</h3>
+        <p><code>modules/install.nix</code> is exported unchanged as <code>nixosModules.default</code> and <code>systemManagerModules.default</code>. That is only possible because nixfs resolves to nixpkgs on every host regardless of its own distro &mdash; there is no platform package manager to shell out to, so there is no platform-specific installer to write.</p>
+      </div>
+      <div class="arch-detail">
+        <h3>A missing package fails the build, not a warning</h3>
+        <p>Every resolved name is checked against <em>this evaluation's</em> <code>pkgs</code> before anything installs. nixpkgs does drop packages &mdash; ReiserFS tooling went when the kernel dropped the filesystem. A recovery tool that silently stopped being installed is the worst outcome this module could produce, so it throws, with the name in the message, instead of quietly installing less.</p>
+      </div>
+      <div class="arch-detail">
+        <h3>ZFS is deliberately not in the catalogue</h3>
+        <p>ZFS userland has to match the loaded kernel module exactly, so it can only come from whatever provides that module &mdash; <code>boot.zfs</code> on NixOS, the distro's own packaging elsewhere. A second, independently-versioned copy from nixfs would be a hazard, not a convenience, and a CI check exists so that adding it later has to be a deliberate, visible act.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="features">
+  <div class="container">
+    <h2>What you get</h2>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3>One declared fact, not a guess</h3>
+        <p>The whole configuration surface is <code>nixfs.media</code>: none, fixed, removable or arbitrary. No default exists, and none ever will &mdash; too low a tier installs nothing and looks fine right up until the tools are needed.</p>
+      </div>
+      <div class="feature">
+        <h3>Mounts and meets, both closed</h3>
+        <p>NixOS already installs userland for what a host mounts, from <code>fileSystems.*</code>; nixfs does not duplicate that. It closes the other half &mdash; what a host merely meets &mdash; on NixOS and on a non-NixOS host alike.</p>
+      </div>
+      <div class="feature">
+        <h3>Tiers are monotone, and it is checked</h3>
+        <p>Each tier declares only what it adds; there is no way to write "remove". A higher tier is a strict superset of every lower one by construction, and CI checks every consecutive pair rather than trusting the comment.</p>
+      </div>
+      <div class="feature">
+        <h3>A missing package fails the build</h3>
+        <p>Every resolved name is checked against this host's own nixpkgs before install. A tool that silently stopped being packaged is discovered at eval time, with its name in the error &mdash; not while a disk is already dying.</p>
+      </div>
+      <div class="feature">
+        <h3>ZFS stays out, on purpose</h3>
+        <p>ZFS userland has to match the loaded kernel module, so it can only come from whatever supplies that module. nixfs asserts against a second, independently-versioned copy ever being added to the catalogue.</p>
+      </div>
+      <div class="feature">
+        <h3><code>omit</code> always warns</h3>
+        <p>The escape hatch exists for one honest case: a package broken or marked insecure in the pinned nixpkgs, where the alternative is that the host cannot build at all. Every use is reported in <code>warnings</code>, and the warning does not go away on its own.</p>
+      </div>
+      <div class="feature">
+        <h3>Mounts stay independent of tier</h3>
+        <p><code>nixfs.filesystems</code> is additive on top of whatever the tier gives, for the host whose tier says nothing about what it mounts: a container is <code>media = "none"</code> plus <code>filesystems = [ "btrfs" ]</code>, and gets exactly that.</p>
+      </div>
+      <div class="feature">
+        <h3>24 eval-time tests, no VM</h3>
+        <p>Each test evaluates a real configuration through NixOS's own <code>eval-config.nix</code> and system-manager's own <code>makeSystemConfig</code>, and inspects what the module renders. Covers catalogue resolution, tier monotonicity, and that both backends resolve the same input to the same packages.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install" class="install">
+  <div class="container">
+    <h2>Get started</h2>
+    <div class="install-grid">
+      <div class="install-method">
+        <h3>1. Add the flake input</h3>
+        <pre><code>inputs.nixfs.url = "github:julian-corbet/nixfs-corbet-ch";</code></pre>
+      </div>
+      <div class="install-method">
+        <h3>2. Import and declare</h3>
+        <pre><code>imports = [ inputs.nixfs.nixosModules.default ];
+
+nixfs = {
+  enable = true;
+  media = "removable";
+};</code></pre>
+        <p>Works unchanged under <a href="https://github.com/numtide/system-manager">system-manager</a> on a non-NixOS host: same options, <code>systemManagerModules.default</code> instead of <code>nixosModules.default</code>.</p>
+      </div>
+      <div class="install-method">
+        <h3>3. Add anything beyond the tier</h3>
+        <pre><code>nixfs.filesystems = [ "btrfs" ];
+nixfs.omit = [ "filesystems.hfs" ];</code></pre>
+        <p><code>filesystems</code>, <code>volumes</code>, <code>recovery</code>, <code>inspection</code>, <code>partitioning</code> and <code>throughput</code> each take extra catalogue keys on top of the tier. <code>omit</code> takes one away, and always warns while it does.</p>
+      </div>
+      <div class="install-method">
+        <h3>Policy only, no installer</h3>
+        <p>Want <code>nixfs.packageNames</code> without <code>environment.systemPackages</code> being touched, to wire it into something else yourself? Import <code>nixosModules.policy</code> / <code>systemManagerModules.policy</code> instead of <code>.default</code>.</p>
+        <a href="https://github.com/julian-corbet/nixfs-corbet-ch" class="btn btn-primary">View on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="commands">
+  <div class="container">
+    <h2>Key options</h2>
+    <div class="table-scroll">
+      <table>
+        <tbody>
+          <tr><td><code>nixfs.enable</code></td><td>Turn the module on.</td></tr>
+          <tr><td><code>nixfs.media</code></td><td><code>"none"</code>, <code>"fixed"</code>, <code>"removable"</code> or <code>"arbitrary"</code>. No default: required whenever <code>enable = true</code>, or evaluation fails.</td></tr>
+          <tr><td><code>nixfs.filesystems</code></td><td>Filesystem userland beyond the tier &mdash; normally what the host actually mounts. Additive; on NixOS usually unnecessary, since <code>fileSystems.*</code> already covers it.</td></tr>
+          <tr><td><code>nixfs.volumes</code> / <code>.recovery</code> / <code>.inspection</code> / <code>.partitioning</code> / <code>.throughput</code></td><td>Additive per-group selections on top of the tier, for the host that needs one more thing than its tier gives it.</td></tr>
+          <tr><td><code>nixfs.omit</code></td><td>Escape hatch, written as <code>"&lt;group&gt;.&lt;key&gt;"</code>. Always reported in <code>warnings</code>; a key not in the catalogue is a build error, not a no-op.</td></tr>
+          <tr><td><code>nixfs.selected</code></td><td>Read-only. Per group, the catalogue keys this host resolved to.</td></tr>
+          <tr><td><code>nixfs.packageNames</code></td><td>Read-only. The resolved selection as nixpkgs attribute names &mdash; what <code>modules/install.nix</code> actually installs.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch#readme">Docs</a>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch">Source</a>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch/tree/main/experiments">Experiments</a>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch/tree/main/studies">Studies</a>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch/issues">Issues</a>
+    </div>
+    <p>
+      <a href="https://github.com/julian-corbet/nixfs-corbet-ch/blob/main/LICENSE">MIT</a> &middot;
+      <a href="https://github.com/julian-corbet">Julian Corbet</a>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
