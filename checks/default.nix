@@ -165,13 +165,13 @@ let
 
     # A multi-package filesystem entry must contribute all of its packages, not just the first --
     # vfat is the only entry with more than one, so it is the only thing standing between the
-    # module and silently dropping mtools.
+    # module and silently dropping mtools or fatresize.
     (check "filesystems/multi-package-entry-contributes-all"
       (
         let cfg = evalNixos { nixfs.filesystems = [ "vfat" ]; };
-        in lib.all (p: lib.elem p cfg.nixfs.packageNames) [ "dosfstools" "mtools" ]
+        in lib.all (p: lib.elem p cfg.nixfs.packageNames) [ "dosfstools" "mtools" "fatresize" ]
       )
-      "vfat did not contribute both dosfstools and mtools")
+      "vfat did not contribute all of dosfstools, mtools and fatresize")
 
     # --- 4. the constrained cases resolve to what they claim ----------------------------
     (check "constrained/one-filesystem-no-toolkit"

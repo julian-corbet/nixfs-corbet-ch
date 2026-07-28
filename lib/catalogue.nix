@@ -48,8 +48,8 @@
       tools = "e2fsck (fsck.ext2/3/4), mke2fs, dumpe2fs, tune2fs, resize2fs, debugfs";
     };
     vfat = {
-      packages = [ "dosfstools" "mtools" ];
-      tools = "fsck.fat, mkfs.fat; plus mtools' mcopy/mdir/mtype to read a FAT volume without mounting it";
+      packages = [ "dosfstools" "mtools" "fatresize" ];
+      tools = "fsck.fat, mkfs.fat, fatresize (the only non-destructive FAT16/FAT32 resizer -- parted dropped filesystem resizing in 3.x, so without this shrinking an ESP means backup/mkfs/restore); plus mtools' mcopy/mdir/mtype to read a FAT volume without mounting it";
     };
     exfat = {
       packages = [ "exfatprogs" ];
