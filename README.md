@@ -138,6 +138,53 @@ exists to prevent — and omitting something the host was never going to install
 fails the build, so an entry cannot sit in a config looking meaningful after
 whatever pulled it in is gone.
 
+## Family convention: consuming `lib.catalogue` (or any sibling's shared fact) never through `_module.args`
+
+This section binds every project in the family, not just this one — it lives
+here because `nixfs.lib.catalogue` is the shared fact that first taught it.
+
+`nixfs.lib.catalogue` is data, not a module: no `enable`, no config surface,
+just the f2fs recipe (mkfs feature bits, mount options, the kernel floor they
+need) as a plain attrset. Two sibling flakes — `nixnas` and `nixvault` — each
+consume it to build their own f2fs container, and each publishes a NixOS
+module of its own for a downstream host to import. The question both had to
+answer is *how does a plain fetched value become an argument inside a module
+someone else composes* — and there is exactly one safe answer.
+
+**The wrong shape:** thread the value through as `_module.args.nixfsCatalogue`,
+so any module imported alongside yours can reach it as an ordinary module
+argument. It works — right up until a second flake, on the exact same host,
+does the same thing under the same name. `nixnas` and `nixvault` both did:
+correct in each flake alone, and a hard *"the option ... is defined multiple
+times"* evaluation failure the one time a consumer (`infra`'s `mkNixnas`)
+composed both together. `_module.args` is not per-flake — it is ONE namespace
+shared by every module composed onto that host, merged with
+`mergeOneOption`, which rejects a second definition **even when both values
+are byte-identical**. And because the collision is between two *module
+arguments*, not two *flake inputs*, no `inputs.<x>.follows` pin can rescue
+it — `follows` only ever collapses which upstream flake gets fetched, never
+what name a module publishes into the shared argument namespace.
+
+**The shape that works: partial application.** Close over the value in your
+own `flake.nix`, before the module system ever runs — `import
+./modules/your-module.nix { nixfsCatalogue = nixfs.lib.catalogue; }` — so the
+file returns the fully-applied `{ config, lib, pkgs, ... }:` function the
+module system actually expects. The outer `{ nixfsCatalogue }:` layer is
+called once, by you, and is gone by the time anything merges module
+arguments; `nixfsCatalogue` never becomes a name in that namespace at all, so
+a sibling flake making the identical choice about the identical fact cannot
+collide with you, regardless of which argument name it happens to pick.
+`nixnas` (`modules/default.nix`) and `nixvault` (`flake.nix`) both fixed the
+same collision this way, independently, and converged on the identical
+shape — see either file's own header for the in-repo version of this note.
+
+The rule generalises past this one fact: **a flake must never publish a fact
+it consumes through `_module.args`.** Any shared value from any sibling —
+this catalogue, a future one from `nixram` or `nixiam`, anything — gets
+closed over as a plain function argument before your module file is handed
+to `imports`, never threaded through as a module argument for consumers to
+pick up implicitly.
+
 ## Tests
 
 ```
