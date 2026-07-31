@@ -10,9 +10,8 @@
 #   1. The catalogue still resolves. nixpkgs drops packages (ReiserFS tooling went when the kernel
 #      dropped the filesystem). Without this, a tool silently stops being installed and nobody
 #      finds out until a disk is dying.
-#   2. The defaults are what the module says they are. `tools.*` defaulting ON is the whole shape
-#      of the redesign -- if a group ever silently flipped, hosts would lose their toolkit without
-#      a single line of their own config changing.
+#   2. The defaults are what the module says they are: if `tools.*` ever silently flipped off,
+#      hosts would lose their toolkit without a single line of their own config changing.
 #   3. Both backends agree. nixfs's reason to exist is that the toolchain is identical regardless
 #      of the host's distro. If the NixOS and system-manager evaluations of the same input ever
 #      diverge, that claim is false and everything else here is decoration.
@@ -140,8 +139,8 @@ let
       "the catalogue names ZFS userland; it must come from whatever provides the kernel module (boot.zfs on NixOS), never from here -- see lib/catalogue.nix")
 
     # --- 2. the defaults are what the module says ---------------------------------------
-    # `tools.*` defaults ON. This is the redesign's central claim: the generic toolkit is not a
-    # per-host judgment call, so a host gets it without asking.
+    # `tools.*` defaults ON: the generic toolkit is not a per-host judgment call, so a host gets
+    # it without asking.
     (check "defaults/bare-enable-gives-the-whole-toolkit"
       (sorted cfg-bare.nixfs.packageNames == sorted allToolPackages)
       "got: ${builtins.toJSON (sorted cfg-bare.nixfs.packageNames)}, expected exactly the tool groups: ${builtins.toJSON (sorted allToolPackages)}")

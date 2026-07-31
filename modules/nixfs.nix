@@ -22,11 +22,6 @@
 #   an on-disk format or to a machine's role. It is the generic storage toolkit, so every group
 #   defaults ON and a host that genuinely cannot use one turns it off with a reason.
 #
-# An earlier version of this module collapsed both into a single four-value "media exposure" tier.
-# That was wrong: it made "which filesystems" and "which tools" move together when they are
-# independent, and it forced a host to describe itself with one word chosen from a taxonomy
-# invented here, rather than state the two things it actually knows.
-#
 # PLATFORM-NEUTRAL BY DESIGN. This file declares WHAT is wanted and resolves it to nixpkgs
 # attribute names. It installs nothing -- see modules/install.nix, which is imported by both
 # backends because, unlike a distro-package module, there is nothing platform-specific left to do.

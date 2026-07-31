@@ -17,22 +17,13 @@
       pkgsFor = system: import nixpkgs { inherit system; };
     in
     {
-      # ---------------------------------------------------------------
-      # Policy only: the option surface and the resolved selection,
-      # installing nothing. Import this if you want `nixfs.packageNames`
-      # and intend to wire it somewhere yourself.
-      # ---------------------------------------------------------------
+      # Policy only: the option surface and the resolved selection, installing nothing. Import this
+      # if you want `nixfs.packageNames` and intend to wire it somewhere yourself.
       nixosModules.policy = ./modules/nixfs.nix;
       systemManagerModules.policy = ./modules/nixfs.nix;
 
-      # ---------------------------------------------------------------
-      # The same file on both backends -- not a convenience, the whole
-      # point. nixfs resolves to nixpkgs on every host regardless of the
-      # host's own distro, so there is no platform-specific installer to
-      # write and nothing for the two sides to disagree about. See
-      # modules/install.nix and lib/catalogue.nix for why recovery
-      # tooling in particular is worth paying a duplicate copy for.
-      # ---------------------------------------------------------------
+      # Same file on both backends: nixfs resolves to nixpkgs on every host regardless of distro,
+      # so there's no platform-specific installer to write or disagree about.
       nixosModules.nixfs = ./modules/install.nix;
       nixosModules.default = self.nixosModules.nixfs;
       systemManagerModules.nixfs = ./modules/install.nix;

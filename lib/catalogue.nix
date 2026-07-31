@@ -2,39 +2,27 @@
 # The catalogue, in the two halves a host actually reasons about.
 #
 # `filesystems` is a per-host fact: which on-disk formats does this machine deal with? Nothing can
-# derive it -- the filesystems a host MOUNTS are already handled by NixOS, and the ones it MEETS
-# are a property of what people plug into it, which no config can see. So it is declared.
+# derive it -- what a host MOUNTS is already handled by NixOS, and what it MEETS is a property of
+# what people plug into it, which no config can see.
 #
-# `tools` is not a per-host fact. ddrescue images a failing device, smartctl asks a drive how it is
-# doing, parted edits a partition table, pv shows you whether a six-hour copy is moving. None of
-# that is specific to a filesystem or to a machine's role -- it is the generic storage toolkit, and
-# the honest default is that a machine which touches disks at all has it. Groups default ON;
-# a host that genuinely cannot use them turns them off and says why.
+# `tools` is not a per-host fact -- ddrescue, smartctl, parted, pv are generic storage toolkit, not
+# tied to any filesystem or machine role, so groups default ON; a host that genuinely cannot use
+# one turns it off and says why.
 #
-# ONE COLUMN, NOT TWO. The sibling toolbox module (nixdev) names each tool twice -- once as a
-# nixpkgs attribute and once as a distro package -- because dev tooling is fine, often better,
-# coming from whatever the host distro ships: you want a current compiler, and a version that moved
-# under you between projects is normal.
+# ONE COLUMN, NOT TWO: unlike the sibling nixdev module (which names each tool twice, nixpkgs and
+# distro package -- fine for dev tooling, where a version that moves under you is normal), recovery
+# tooling is reached for when something is already broken, under time pressure, on media you may
+# not get to re-read -- the worst possible moment to find `ddrescue` two years stale or `testdisk`
+# simply missing. So nixfs resolves to nixpkgs on EVERY host, including non-NixOS ones, and accepts
+# the duplicate copy as the price of a toolchain that's identical and pinned everywhere.
 #
-# Recovery tooling is the opposite case. You reach for it when something is already broken, under
-# time pressure, usually on media you cannot re-read. That is the worst possible moment to discover
-# that this machine's `ddrescue` is two years older than the one you learned the flags on, or that
-# `testdisk` is simply absent because nobody thought to install it here. So nixfs resolves to
-# nixpkgs on EVERY host, including hosts whose own distro is not NixOS, and accepts the duplicate
-# copy as the price of the toolchain being identical and pinned everywhere.
-#
-# WHAT IS DELIBERATELY NOT HERE:
-#
-#   * ZFS. Its userland must match the loaded kernel module exactly, so it can only come from
-#     whatever provides that module -- `boot.zfs` on NixOS, the distro's own module elsewhere.
-#     Installing a second, independently-versioned copy from here is a real hazard, not a
-#     convenience, and there is a check that keeps it out.
-#
-#   * ReiserFS. Removed from nixpkgs after the kernel dropped support in 6.13; there is no package
-#     left to name. Recorded here so its absence reads as a fact rather than an oversight.
-#
-# Each entry says what you actually get, because "install e2fsprogs" is not a useful answer to
-# "how do I check this disk" at 3am.
+# DELIBERATELY NOT HERE:
+#   * ZFS -- its userland must match the loaded kernel module exactly, so it can only come from
+#     whatever provides that module (`boot.zfs` on NixOS, the distro's own elsewhere). A second,
+#     independently-versioned copy from here would be a hazard, not a convenience; a check enforces
+#     its absence.
+#   * ReiserFS -- removed from nixpkgs after the kernel dropped support in 6.13; no package left to
+#     name. Recorded here so the absence reads as a fact, not an oversight.
 #
 { ... }:
 {
