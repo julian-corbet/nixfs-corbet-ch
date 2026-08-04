@@ -38,7 +38,7 @@
 # ecosystem, not from a Nix profile that a distro copy would shadow.
 #
 # For THIS catalogue specifically, that leaves no residue: every entry below has a live Arch
-# source, 30 from an official repo and one (`hfsprogs`, HFS+ support) from the AUR -- confirmed
+# source, 28 from an official repo and one (`hfsprogs`, HFS+ support) from the AUR -- confirmed
 # live, `paru -Si hfsprogs` reports `Repository: aur`. So on an Arch host nothing at all is
 # installed from nixpkgs today: `archPackages` and `aurPackages` between them cover the entire
 # selection. `arch = null` stays a real capability in the entry shape and in the resolution logic
@@ -266,7 +266,6 @@
         "nvme-cli" = { arch = "nvme-cli"; nixpkgs = "nvme-cli"; };
         lsscsi = { arch = "lsscsi"; nixpkgs = "lsscsi"; };
         sg3_utils = { arch = "sg3_utils"; nixpkgs = "sg3_utils"; };
-        usbutils = { arch = "usbutils"; nixpkgs = "usbutils"; };
         pciutils = { arch = "pciutils"; nixpkgs = "pciutils"; };
       };
       summary = "ask the hardware what it thinks";
@@ -274,7 +273,14 @@
         smartctl reads SMART attributes and the reallocated/pending sector counts that decide
         whether to image a drive before touching it. hdparm and sdparm read ATA and SCSI/USB
         parameters; nvme-cli covers NVMe; lsscsi and sg3_utils give device topology and direct
-        SCSI/enclosure queries; lsusb and lspci say what is attached and at what link speed.
+        SCSI/enclosure queries; lspci says what is attached to the PCI bus and at what link speed.
+
+        usbutils (lsusb) moved out to the sibling nixusb repo 2026-08-04: USB device tooling is
+        that repo's domain, and it is composed on hosts (the Arch container among them) that
+        deliberately do not compose nixfs at all -- see this catalogue's own header and nixfs's
+        `filesystems` option doc for why a host with no block devices of its own is right to skip
+        this whole module. pciutils stays here: PCI enumeration is genuinely storage-bus-adjacent
+        on the hosts that already carry the rest of this group, and nobody has asked for it to move.
       '';
     };
 

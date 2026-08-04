@@ -75,7 +75,7 @@ question a host answers is not *do I want this* but *can I actually use it*.
 | group | what it is for | packages |
 |---|---|---|
 | `recovery` | get data off failing or damaged media | ddrescue, testdisk |
-| `inspection` | ask the hardware what it thinks | smartmontools, hdparm, sdparm, nvme-cli, lsscsi, sg3_utils, usbutils, pciutils |
+| `inspection` | ask the hardware what it thinks | smartmontools, hdparm, sdparm, nvme-cli, lsscsi, sg3_utils, pciutils |
 | `partitioning` | read, edit and back up partition tables | gptfdisk, parted |
 | `volumes` | open the block layers between a disk and its filesystem | lvm2, mdadm, cryptsetup |
 | `throughput` | see a long operation move, and measure what a drive really does | pv, fio |
