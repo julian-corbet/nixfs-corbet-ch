@@ -9,12 +9,26 @@
 # tied to any filesystem or machine role, so groups default ON; a host that genuinely cannot use
 # one turns it off and says why.
 #
-# ONE COLUMN, NOT TWO: unlike the sibling nixdev module (which names each tool twice, nixpkgs and
-# distro package -- fine for dev tooling, where a version that moves under you is normal), recovery
-# tooling is reached for when something is already broken, under time pressure, on media you may
-# not get to re-read -- the worst possible moment to find `ddrescue` two years stale or `testdisk`
-# simply missing. So nixfs resolves to nixpkgs on EVERY host, including non-NixOS ones, and accepts
-# the duplicate copy as the price of a toolchain that's identical and pinned everywhere.
+# TWO COLUMNS, NOT ONE. Every entry below names itself twice, `arch` and `nixpkgs`, the same shape
+# as the sibling nixdev/nixoffice catalogues -- which this one used to argue against. The header
+# here used to read "nixfs resolves to nixpkgs on EVERY host, including non-NixOS ones, and accepts
+# the duplicate copy as the price of a toolchain that's identical and pinned everywhere". That
+# bargain does not hold, and it failed for a reason that has nothing to do with staleness.
+#
+# On a live Arch host, `/usr/sbin` precedes the system-manager Nix profile on `PATH`. A package
+# installed from here into that profile does not shadow the distro's copy -- it is the one that gets
+# shadowed. Confirmed live: `mkfs.xfs`, `smartctl`, `pv`, `lsscsi`, `mkfs.f2fs`, `mcopy`, `mdadm` and
+# `hdparm` all resolved to `/usr/sbin` while the pinned nixpkgs copies sat unused in
+# `/run/system-manager/sw/bin`, never once reached by an interactive shell or a script that just
+# calls the bare command name. The price actually paid was not the duplicate disk space -- it was
+# the pin becoming decorative, a copy nobody's `PATH` will ever prefer.
+#
+# So nixfs now resolves PER PLATFORM, like every other catalogue in this family: a NixOS host has no
+# second package manager to lose a `PATH` race against, so nixpkgs remains correct and sufficient
+# there, for every entry. An Arch host gets its packages from pacman/AUR instead -- the host's own
+# reconciler, already first on `PATH`, already the thing that keeps them current -- and nixpkgs is
+# reached for ONLY where Arch has nothing to offer at all (`arch = null`), which is the one case
+# where a `PATH` race cannot even arise because there is no second copy to race against.
 #
 # DELIBERATELY NOT HERE:
 #   * ZFS -- its userland must match the loaded kernel module exactly, so it can only come from
@@ -30,33 +44,44 @@
   # Declared per host. On NixOS the filesystems in `fileSystems.*` are already covered by NixOS
   # itself and nixfs does not duplicate that; declare here what the host MEETS, plus -- on a
   # non-NixOS host, where nothing does it for you -- what it mounts.
+  #
+  # `packages` is an attrset keyed by nixpkgs attribute name (this catalogue's identity for every
+  # entry, since every entry names one), each value naming the SAME thing again for Arch --
+  # `arch = null` where Arch has nothing to offer at all.
   filesystems = {
     ext = {
-      packages = [ "e2fsprogs" ];
+      packages.e2fsprogs = { arch = "e2fsprogs"; nixpkgs = "e2fsprogs"; };
       tools = "e2fsck (fsck.ext2/3/4), mke2fs, dumpe2fs, tune2fs, resize2fs, debugfs";
     };
     vfat = {
-      packages = [ "dosfstools" "mtools" "fatresize" ];
+      packages = {
+        dosfstools = { arch = "dosfstools"; nixpkgs = "dosfstools"; };
+        mtools = { arch = "mtools"; nixpkgs = "mtools"; };
+        fatresize = { arch = "fatresize"; nixpkgs = "fatresize"; };
+      };
       tools = "fsck.fat, mkfs.fat, fatresize (the only non-destructive FAT16/FAT32 resizer -- parted dropped filesystem resizing in 3.x, so without this shrinking an ESP means backup/mkfs/restore); plus mtools' mcopy/mdir/mtype to read a FAT volume without mounting it";
     };
     exfat = {
-      packages = [ "exfatprogs" ];
+      packages.exfatprogs = { arch = "exfatprogs"; nixpkgs = "exfatprogs"; };
       tools = "fsck.exfat, mkfs.exfat, exfatlabel, tune.exfat";
     };
     ntfs = {
-      packages = [ "ntfs3g" ];
+      # The one name that differs between channels: nixpkgs calls it `ntfs3g`, Arch calls the same
+      # package `ntfs-3g`. Kept under the nixpkgs name because that is this catalogue's identity for
+      # every entry; the divergence lives entirely in the `arch` field.
+      packages.ntfs3g = { arch = "ntfs-3g"; nixpkgs = "ntfs3g"; };
       tools = "ntfsfix, ntfsck, ntfsinfo, mkntfs, ntfsclone, ntfsresize, ntfsundelete, ntfslabel";
     };
     xfs = {
-      packages = [ "xfsprogs" ];
+      packages.xfsprogs = { arch = "xfsprogs"; nixpkgs = "xfsprogs"; };
       tools = "xfs_repair, xfs_db, xfs_scrub, xfs_admin, mkfs.xfs";
     };
     btrfs = {
-      packages = [ "btrfs-progs" ];
+      packages."btrfs-progs" = { arch = "btrfs-progs"; nixpkgs = "btrfs-progs"; };
       tools = "btrfs check/scrub/balance/restore, btrfstune, mkfs.btrfs";
     };
     f2fs = {
-      packages = [ "f2fs-tools" ];
+      packages."f2fs-tools" = { arch = "f2fs-tools"; nixpkgs = "f2fs-tools"; };
       tools = "fsck.f2fs, mkfs.f2fs, dump.f2fs";
 
       # ── THE compression recipe for a slow-flash f2fs volume ────────────────────────────────
@@ -177,19 +202,23 @@
       };
     };
     hfs = {
-      packages = [ "hfsprogs" ];
+      # Not in any Arch repo -- AUR-only, a from-source build of Apple's diskdev_cmds. `arch = null`
+      # rather than `aur = true`: an Arch host gets this one from nixpkgs, the one case in this
+      # catalogue where reaching for nixpkgs on a non-NixOS host is correct rather than the bug this
+      # file's header describes -- there is no distro copy to lose a PATH race against.
+      packages.hfsprogs = { arch = null; nixpkgs = "hfsprogs"; };
       tools = "fsck.hfsplus, mkfs.hfsplus -- HFS+/HFS, i.e. externally formatted Mac disks";
     };
     udf = {
-      packages = [ "udftools" ];
+      packages.udftools = { arch = "udftools"; nixpkgs = "udftools"; };
       tools = "mkudffs, udfinfo, udflabel -- optical and UDF-formatted media";
     };
     jfs = {
-      packages = [ "jfsutils" ];
+      packages.jfsutils = { arch = "jfsutils"; nixpkgs = "jfsutils"; };
       tools = "fsck.jfs, mkfs.jfs -- legacy media only; nothing creates JFS today";
     };
     nilfs = {
-      packages = [ "nilfs-utils" ];
+      packages."nilfs-utils" = { arch = "nilfs-utils"; nixpkgs = "nilfs-utils"; };
       tools = "mkfs.nilfs2, fsck.nilfs2, lscp/mkcp checkpoint tools -- legacy media only";
     };
   };
@@ -200,7 +229,10 @@
   # kinds of drive, and the packages are small next to the cost of not having one.
   tools = {
     recovery = {
-      packages = [ "ddrescue" "testdisk" ];
+      packages = {
+        ddrescue = { arch = "ddrescue"; nixpkgs = "ddrescue"; };
+        testdisk = { arch = "testdisk"; nixpkgs = "testdisk"; };
+      };
       summary = "get data off failing or damaged media";
       detail = ''
         ddrescue images a dying drive sector-by-sector with a resumable mapfile, so a second pass
@@ -211,7 +243,16 @@
     };
 
     inspection = {
-      packages = [ "smartmontools" "hdparm" "sdparm" "nvme-cli" "lsscsi" "sg3_utils" "usbutils" "pciutils" ];
+      packages = {
+        smartmontools = { arch = "smartmontools"; nixpkgs = "smartmontools"; };
+        hdparm = { arch = "hdparm"; nixpkgs = "hdparm"; };
+        sdparm = { arch = "sdparm"; nixpkgs = "sdparm"; };
+        "nvme-cli" = { arch = "nvme-cli"; nixpkgs = "nvme-cli"; };
+        lsscsi = { arch = "lsscsi"; nixpkgs = "lsscsi"; };
+        sg3_utils = { arch = "sg3_utils"; nixpkgs = "sg3_utils"; };
+        usbutils = { arch = "usbutils"; nixpkgs = "usbutils"; };
+        pciutils = { arch = "pciutils"; nixpkgs = "pciutils"; };
+      };
       summary = "ask the hardware what it thinks";
       detail = ''
         smartctl reads SMART attributes and the reallocated/pending sector counts that decide
@@ -222,7 +263,10 @@
     };
 
     partitioning = {
-      packages = [ "gptfdisk" "parted" ];
+      packages = {
+        gptfdisk = { arch = "gptfdisk"; nixpkgs = "gptfdisk"; };
+        parted = { arch = "parted"; nixpkgs = "parted"; };
+      };
       summary = "read, edit and back up partition tables";
       detail = ''
         gdisk/sgdisk/cgdisk for GPT -- including sgdisk --backup, which is the one command worth
@@ -232,7 +276,11 @@
     };
 
     volumes = {
-      packages = [ "lvm2" "mdadm" "cryptsetup" ];
+      packages = {
+        lvm2 = { arch = "lvm2"; nixpkgs = "lvm2"; };
+        mdadm = { arch = "mdadm"; nixpkgs = "mdadm"; };
+        cryptsetup = { arch = "cryptsetup"; nixpkgs = "cryptsetup"; };
+      };
       summary = "open the block layers between a disk and its filesystem";
       detail = ''
         A foreign disk whose ext4 lives inside an LVM volume group inside a LUKS container is
@@ -244,7 +292,10 @@
     };
 
     throughput = {
-      packages = [ "pv" "fio" ];
+      packages = {
+        pv = { arch = "pv"; nixpkgs = "pv"; };
+        fio = { arch = "fio"; nixpkgs = "fio"; };
+      };
       summary = "see a long operation move, and measure what a drive really does";
       detail = ''
         pv gives progress, rate and ETA for a dd/ddrescue/tar/zfs-send pipe that would otherwise

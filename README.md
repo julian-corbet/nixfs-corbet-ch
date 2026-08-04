@@ -1,8 +1,9 @@
 # nixfs
 
-The storage toolchain as a declared fact per host — resolved from nixpkgs on
-NixOS and non-NixOS hosts alike, so the tools you reach for when a disk is
-failing are pinned and identical everywhere.
+The storage toolchain as a declared fact per host — resolved PER PLATFORM (a
+pacman/AUR name on Arch, a nixpkgs attribute on NixOS) so the tools you reach
+for when a disk is failing are actually reachable everywhere, not just pinned
+somewhere nobody's `PATH` will find them.
 
 The thesis in three sentences: NixOS already installs check/repair userland for
 the filesystems a host **mounts**, and nothing anywhere installs userland for
@@ -19,7 +20,11 @@ discover which tools are missing at the exact moment you need them.
 {
   inputs.nixfs.url = "github:julian-corbet/nixfs-corbet-ch";
 }
-# in your nixosSystem modules — or, unchanged, in a system-manager config:
+```
+
+On a NixOS host:
+
+```nix
 imports = [ inputs.nixfs.nixosModules.default ];
 nixfs = {
   enable = true;
@@ -27,9 +32,24 @@ nixfs = {
 };
 ```
 
+On an Arch host running system-manager:
+
+```nix
+imports = [ inputs.nixfs.systemManagerModules.default ];
+nixfs = {
+  enable = true;
+  filesystems = [ "btrfs" "vfat" "exfat" "ntfs" ];
+};
+# and, wherever this host's own pacman/AUR reconciler is configured:
+nixarch.packages.pacman = config.nixfs.archPackages;
+nixarch.packages.aur = config.nixfs.aurPackages;
+```
+
 That host gets userland for those four formats plus the whole generic toolkit.
 `enable = true` on its own is also a complete answer: the toolkit, and no
-filesystem userland.
+filesystem userland. Which backend installs how much differs by design — see
+"Deliberate decisions" below — but what a host is declared to want is identical
+either way.
 
 ## Two halves, because they are two different questions
 
@@ -92,29 +112,49 @@ nixfs = {
 - `filesystems` — which on-disk formats this host needs userland for. Empty is a
   legitimate answer, and the right one for a machine that owns no block devices.
 - `tools.<group>.enable` — one boolean per group above, all `true` by default.
-- `omit` — escape hatch, by nixpkgs attribute name. Always warns; see below.
-- `packageNames` — read-only. What this host resolved to, without instantiating
-  anything.
+- `omit` — escape hatch, by nixpkgs attribute name. Removes the named entry from
+  BOTH channels at once. Always warns; see below.
+- `packageNames` — read-only. The resolved selection as nixpkgs attribute names
+  — what a NixOS host actually installs, and, on Arch, the identity every entry
+  is named by regardless of channel.
+- `archPackages` / `aurPackages` — read-only. The resolved selection as pacman /
+  AUR package names, for an Arch host's own reconciler:
+  `nixarch.packages.pacman = config.nixfs.archPackages;`. `aurPackages` is empty
+  today — nothing in the catalogue is AUR-only yet — but exists for the same
+  reason it exists in the sibling nixdev/nixoffice catalogues: the day an entry
+  needs it, the option surface should not be a surprise.
+- `unavailableOnArch` — read-only. Selected entries with no Arch package at all,
+  by nixpkgs attribute name. These are the ones an Arch host still gets from
+  nixpkgs — see below for why that is the one case where reaching for nixpkgs on
+  a non-NixOS host is correct rather than the bug this project exists to fix.
 
 ## Deliberate decisions
 
-**One catalogue column, not two.** The sibling toolbox module resolves each tool
-to both a nixpkgs attribute and a distro package, because dev tooling is fine —
-often better — coming from whatever the host distro ships. Recovery tooling is
-the opposite case. You reach for it when something is already broken, under time
-pressure, usually on media you cannot re-read. That is the worst possible moment
-to discover this machine's `ddrescue` is two years older than the one you
-learned the flags on, or that `testdisk` is simply absent because nobody thought
-to install it here. So nixfs resolves to nixpkgs on every host regardless of
-distro, and accepts the duplicate copy as the price of the toolchain being
-identical.
+**Two catalogue columns, not one.** This module used to resolve every entry to
+nixpkgs only, on every host, and argued that recovery tooling was worth pinning
+identically everywhere at the price of a duplicate copy. That bargain did not
+hold, and it failed for a reason that has nothing to do with staleness: on a
+live Arch host, `/usr/sbin` precedes the system-manager Nix profile on `PATH`,
+so the distro's own `mkfs.xfs`, `smartctl`, `pv`, `lsscsi`, `mkfs.f2fs`,
+`mcopy`, `mdadm` and `hdparm` all won every lookup, and the pinned nixpkgs
+copies sat in `/run/system-manager/sw/bin`, never once reached by a bare
+command name. The price actually paid was not the duplicate disk space — it was
+the pin becoming decorative. So nixfs now names every entry twice, `arch` and
+`nixpkgs`, the same shape as the sibling nixdev/nixoffice catalogues, and
+resolves per platform instead. See `lib/catalogue.nix`'s own header for the
+full account.
 
-**One module file, both backends.** `nixosModules.default` and
-`systemManagerModules.default` are the same file. That is not a convenience — it
-is the whole point, and it is only possible *because* of the decision above:
-resolving to nixpkgs everywhere leaves nothing platform-specific to write. CI
-evaluates both backends on three different configurations and fails if they
-disagree.
+**Two different backends, because the platforms are not symmetric.** A NixOS
+host has no second package manager to lose a `PATH` race against, so
+`nixosModules.default` still installs every selected entry from nixpkgs,
+unconditionally — the simple case, unchanged. An Arch host running
+`systemManagerModules.default` gets pacman/AUR names published for its own
+reconciler, and nixpkgs reached for ONLY on the entries Arch has nothing for at
+all (`unavailableOnArch`, e.g. `hfsprogs` — AUR-only upstream, no official Arch
+package). No entry is ever installed by both channels on the same host; CI
+proves that property directly, as a real evaluation of both backends against
+the real catalogue, not merely inferred from the code being structured that
+way.
 
 **A missing package is a build failure, not a warning.** nixpkgs drops packages
 — ReiserFS tooling went when the kernel dropped the filesystem. No entry here is
@@ -191,9 +231,14 @@ pick up implicitly.
 nix flake check
 ```
 
-24 eval-time tests, no VM: the catalogue still resolves against nixpkgs, the
-defaults are what the module claims, turning off one group removes exactly that
-group's packages, the two backends agree, and the failure modes actually fail.
+43 eval-time tests, no VM: the channel resolution against fixtures covering
+shapes the real catalogue does not happen to have yet (an AUR entry, a
+diverging arch/nixpkgs name), the real catalogue against both backends'
+option surfaces, the defaults are what the module claims, turning off one
+group removes exactly that group's packages, both backends agree on WHAT is
+wanted, and — the property this project exists for — neither backend ever
+installs the same entry twice: an Arch host installs a selected entry from
+nixpkgs if and only if Arch has no package for it at all.
 
 ## Scope
 

@@ -1,13 +1,14 @@
 #
-# The backend: resolve nixfs's selection into environment.systemPackages.
+# The NixOS backend: resolve nixfs's selection into environment.systemPackages, entirely from
+# nixpkgs.
 #
-# ONE BACKEND, BOTH PLATFORMS. The sibling toolbox module (nixdev) needs two backends, because on
-# a distro-managed host it has no installer of its own and can only publish a package list for
-# that host's reconciler to consume. nixfs has no such split: it resolves to nixpkgs everywhere by
-# design (see lib/catalogue.nix for why recovery tooling is the one toolchain worth pinning
-# identically across distros), and `environment.systemPackages` is understood by both NixOS and
-# system-manager. So this file is exported unchanged as both `nixosModules.default` and
-# `systemManagerModules.default`, and a host reads the same either way.
+# NixOS has no second package manager to lose a `PATH` race against, so every selected entry --
+# including the ones ../lib/catalogue.nix also names an Arch package for -- comes from nixpkgs here,
+# unconditionally. That is NOT the same choice ../modules/arch.nix makes: on Arch, installing an
+# entry that already has a pacman name would shadow-or-be-shadowed by the distro's own copy (see
+# ../lib/catalogue.nix's header for the live evidence), so that backend installs only the entries
+# with no Arch package at all. This file has no such hazard to avoid, which is why it stays the
+# simpler "everything from nixpkgs" backend it always was.
 #
 # A MISSING ATTRIBUTE IS A BUILD FAILURE, NOT A WARNING. nixdev warns and continues, correctly:
 # some of its entries genuinely have no nixpkgs equivalent, so a warning is the honest report. No

@@ -8,8 +8,11 @@
 # version the distro shipped the day somebody remembered, or they never arrive at all.
 #
 # Both halves of that gap are the same failure: you find out which tools are missing at the moment
-# you need them. nixfs makes the answer a declared fact instead, resolved from nixpkgs on every
-# host regardless of distro, so the toolchain is pinned and identical everywhere.
+# you need them. nixfs makes the answer a declared fact instead, resolved PER PLATFORM so it is
+# actually reachable on every host regardless of distro -- see ../lib/catalogue.nix's header for
+# why "resolve to nixpkgs everywhere" was tried first and abandoned: on a live Arch host, the distro
+# copy on `PATH` wins over anything installed into a Nix profile, so a nixpkgs-only pin there is
+# never actually reached.
 #
 # TWO HALVES, BECAUSE THEY ARE TWO DIFFERENT QUESTIONS.
 #
@@ -22,32 +25,47 @@
 #   an on-disk format or to a machine's role. It is the generic storage toolkit, so every group
 #   defaults ON and a host that genuinely cannot use one turns it off with a reason.
 #
-# PLATFORM-NEUTRAL BY DESIGN. This file declares WHAT is wanted and resolves it to nixpkgs
-# attribute names. It installs nothing -- see modules/install.nix, which is imported by both
-# backends because, unlike a distro-package module, there is nothing platform-specific left to do.
+# PLATFORM-NEUTRAL BY DESIGN, in the sense that matters now: this file declares WHAT is wanted and
+# resolves EVERY entry to BOTH a pacman name and a nixpkgs attribute name (../lib/resolve.nix). It
+# installs nothing itself -- see ../modules/install.nix (the NixOS backend: nixpkgs for everything,
+# because NixOS has no second package manager to lose a PATH race against) and
+# ../modules/arch.nix (the system-manager backend: pacman/AUR for everything Arch has, nixpkgs ONLY
+# for the entries Arch does not).
 #
 { config, lib, ... }:
 
 let
   cfg = config.nixfs;
   catalogue = import ../lib/catalogue.nix { };
+  resolve = import ../lib/resolve.nix { inherit lib; };
 
   fsNames = lib.attrNames catalogue.filesystems;
   toolGroups = lib.attrNames catalogue.tools;
 
-  selectedFsPackages =
-    lib.concatMap (k: catalogue.filesystems.${k}.packages) cfg.filesystems;
+  # Attaches each package's own attrset key as `name` -- the catalogue's identity for that entry,
+  # since every entry names one (see ../lib/catalogue.nix's header). Without it, an entry has only
+  # its per-channel package names to be reported by, and `arch` is nullable -- exactly how the
+  # sibling nixoffice's `unavailableOnNixos` once failed to report a channel-less entry. See
+  # ../lib/resolve.nix's own header for the analogous case here.
+  withName = table: lib.mapAttrsToList (n: v: v // { name = n; }) table;
+
+  selectedFsEntries =
+    lib.concatMap (k: withName catalogue.filesystems.${k}.packages) cfg.filesystems;
 
   enabledGroups = lib.filter (g: cfg.tools.${g}.enable) toolGroups;
 
-  selectedToolPackages =
-    lib.concatMap (g: catalogue.tools.${g}.packages) enabledGroups;
+  selectedToolEntries =
+    lib.concatMap (g: withName catalogue.tools.${g}.packages) enabledGroups;
 
-  wanted = lib.unique (selectedFsPackages ++ selectedToolPackages);
+  wantedEntries = lib.unique (selectedFsEntries ++ selectedToolEntries);
 
-  resolved = lib.filter (p: !(lib.elem p cfg.omit)) wanted;
+  # `omit` names nixpkgs attributes, and every entry's `name` IS its nixpkgs attribute (see
+  # ../lib/catalogue.nix), so filtering by `name` here removes an omitted entry from BOTH channels
+  # at once -- there is no way for an omission to reach one channel and miss the other.
+  selectedEntries = lib.filter (t: !(lib.elem t.name cfg.omit)) wantedEntries;
 
-  unknownOmissions = lib.filter (o: !(lib.elem o wanted)) cfg.omit;
+  unknownOmissions =
+    lib.filter (o: !(lib.elem o (map (t: t.name) wantedEntries))) cfg.omit;
 
   mkToolOption = group: {
     enable = lib.mkOption {
@@ -57,7 +75,7 @@ let
         ${catalogue.tools.${group}.summary}.
 
         ${catalogue.tools.${group}.detail}
-        Packages: ${lib.concatStringsSep ", " catalogue.tools.${group}.packages}.
+        Packages: ${lib.concatStringsSep ", " (lib.attrNames catalogue.tools.${group}.packages)}.
 
         On by default. This is the generic storage toolkit -- it is not specific to any on-disk
         format or to what this machine is for -- so the question a host answers here is not "do I
@@ -71,7 +89,7 @@ let
 in
 {
   options.nixfs = {
-    enable = lib.mkEnableOption "the storage toolchain -- per-filesystem userland plus the generic recovery/inspection/partitioning toolkit, pinned from nixpkgs on every host regardless of distro";
+    enable = lib.mkEnableOption "the storage toolchain -- per-filesystem userland plus the generic recovery/inspection/partitioning toolkit, resolved per platform so it is actually reachable on every host regardless of distro";
 
     filesystems = lib.mkOption {
       type = lib.types.listOf (lib.types.enum fsNames);
@@ -118,23 +136,81 @@ in
         in `warnings` every time, because a host quietly missing part of its toolchain is the exact
         situation nixfs exists to prevent. An entry naming a package this host was not going to get
         anyway is an error, so a stale omission cannot sit in a config looking meaningful.
+
+        Named by nixpkgs attribute name, and applies to BOTH channels at once: the same entry is
+        dropped from `archPackages`/`aurPackages` as from `packageNames`, since a package a host
+        should not have does not become acceptable on the other platform.
       '';
     };
 
     # ── Computed, read-only ────────────────────────────────────────────────────────────────
+    want = lib.mkOption {
+      type = lib.types.listOf lib.types.attrs;
+      readOnly = true;
+      internal = true;
+      description = "Resolved entries; the contract a platform backend consumes.";
+    };
+
     packageNames = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       readOnly = true;
       description = ''
-        The resolved selection as nixpkgs attribute names. The contract modules/install.nix
-        consumes, and what to read if you want to see what a host will actually get without
+        The resolved selection as nixpkgs attribute names. The contract ../modules/install.nix
+        consumes, and what to read if you want to see what a NixOS host will actually get without
         instantiating anything.
+      '';
+    };
+
+    archPackages = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      readOnly = true;
+      description = ''
+        The selected tools as pacman package names, for the host's own reconciler:
+
+          nixarch.packages.pacman = config.nixfs.archPackages;
+
+        This module cannot install them on Arch: see ../modules/arch.nix, which publishes this list
+        rather than installing from it, and installs from nixpkgs only the entries Arch has nothing
+        for (`unavailableOnArch` below) -- so a package present in both never gets installed twice.
+      '';
+    };
+
+    aurPackages = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      readOnly = true;
+      description = ''
+        Selections that live in the AUR rather than an official repo, kept SEPARATE because
+        `pacman -S` cannot resolve them -- it fails the whole transaction with "target not found",
+        which takes the rest of the converge down with it. Wire them to the AUR side:
+
+          nixarch.packages.aur = config.nixfs.aurPackages;
+
+        Empty today: nothing in ../lib/catalogue.nix is AUR-only yet (hfsprogs, the one entry with
+        no Arch package at all, comes from nixpkgs instead -- see `unavailableOnArch`). Kept as its
+        own option anyway, for the same reason the sibling nixdev/nixoffice catalogues keep it
+        separate from `archPackages`: the day an entry does need the AUR, the option surface should
+        not be a surprise.
+      '';
+    };
+
+    unavailableOnArch = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      readOnly = true;
+      description = ''
+        Selected entries with no Arch package at all, named by nixpkgs attribute name (this
+        catalogue's identity for every entry). Surfaced rather than silently handled, so it is
+        visible which entries a non-NixOS host still gets from nixpkgs and why: see
+        ../modules/arch.nix, which installs exactly this list from nixpkgs and nothing more.
       '';
     };
   };
 
   config = {
-    nixfs.packageNames = resolved;
+    nixfs.want = selectedEntries;
+    nixfs.packageNames = map (t: t.nixpkgs) selectedEntries;
+    nixfs.archPackages = resolve.archPackages selectedEntries;
+    nixfs.aurPackages = resolve.aurPackages selectedEntries;
+    nixfs.unavailableOnArch = resolve.unavailableOnArch selectedEntries;
 
     assertions = [
       {
