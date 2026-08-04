@@ -30,6 +30,21 @@
 # reached for ONLY where Arch has nothing to offer at all (`arch = null`), which is the one case
 # where a `PATH` race cannot even arise because there is no second copy to race against.
 #
+# AUR IS A VALID ARCH SOURCE, NOT A FALLBACK TO NIXPKGS. `aur = true` (the same field nixdev's
+# `kind` entry already uses) means the package is real on Arch, just not in an official repo --
+# `pacman -S` cannot resolve an AUR name and fails the whole transaction on "target not found", so
+# an AUR entry is held back into a separate list (`aurPackages`) for whatever AUR helper the host
+# runs, never mixed into the plain pacman one. It is still installed BY Arch, from Arch's own
+# ecosystem, not from a Nix profile that a distro copy would shadow.
+#
+# For THIS catalogue specifically, that leaves no residue: every entry below has a live Arch
+# source, 30 from an official repo and one (`hfsprogs`, HFS+ support) from the AUR -- confirmed
+# live, `paru -Si hfsprogs` reports `Repository: aur`. So on an Arch host nothing at all is
+# installed from nixpkgs today: `archPackages` and `aurPackages` between them cover the entire
+# selection. `arch = null` stays a real capability in the entry shape and in the resolution logic
+# -- a future filesystem tool may genuinely exist nowhere on Arch, official repo or AUR -- but no
+# entry uses it right now, so it is exercised by a fixture in ../checks/, not by a live entry.
+#
 # DELIBERATELY NOT HERE:
 #   * ZFS -- its userland must match the loaded kernel module exactly, so it can only come from
 #     whatever provides that module (`boot.zfs` on NixOS, the distro's own elsewhere). A second,
@@ -202,11 +217,12 @@
       };
     };
     hfs = {
-      # Not in any Arch repo -- AUR-only, a from-source build of Apple's diskdev_cmds. `arch = null`
-      # rather than `aur = true`: an Arch host gets this one from nixpkgs, the one case in this
-      # catalogue where reaching for nixpkgs on a non-NixOS host is correct rather than the bug this
-      # file's header describes -- there is no distro copy to lose a PATH race against.
-      packages.hfsprogs = { arch = null; nixpkgs = "hfsprogs"; };
+      # AUR, not an official repo -- `paru -Si hfsprogs` reports `Repository: aur`. Still a real
+      # Arch source: `aur = true` holds it back into aurPackages rather than archPackages, because
+      # `pacman -S` cannot resolve an AUR name and fails the whole transaction on "target not
+      # found" -- the same reason nixdev's `kind` entry does the same. Nothing is installed from
+      # nixpkgs for this entry on an Arch host.
+      packages.hfsprogs = { arch = "hfsprogs"; nixpkgs = "hfsprogs"; aur = true; };
       tools = "fsck.hfsplus, mkfs.hfsplus -- HFS+/HFS, i.e. externally formatted Mac disks";
     };
     udf = {

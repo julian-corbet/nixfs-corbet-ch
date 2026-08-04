@@ -3,10 +3,11 @@
 # EVAL-TIME tests, two layers:
 #
 #   1. ../lib/resolve.nix driven with FIXTURE entry tables -- every branch of the channel
-#      resolution, including an `aur = true` entry, which the real catalogue does not happen to
-#      have yet. Same reasoning as the sibling nixoffice's version of this split: a resolution
-#      tested only through today's real catalogue can only be tested against the entry shapes that
-#      catalogue happens to contain.
+#      resolution, including an `arch = null` entry (no Arch source at all, official repo or AUR),
+#      which the real catalogue does not happen to have any more: every entry today has a live Arch
+#      source, and `hfsprogs`'s is the AUR. Same reasoning as the sibling nixoffice's version of
+#      this split: a resolution tested only through today's real catalogue can only be tested
+#      against the entry shapes that catalogue happens to contain.
 #
 #   2. ../modules/nixfs.nix, ../modules/install.nix and ../modules/arch.nix evaluated for real --
 #      through NixOS's own eval-config.nix on one side and system-manager's own makeSystemConfig on
@@ -29,9 +30,12 @@
 #   4. NO PACKAGE IS INSTALLED TWICE -- the entire reason this repo stopped resolving to nixpkgs on
 #      every host. The NixOS backend installs every selected entry from nixpkgs, unconditionally.
 #      The Arch backend must install ONLY the entries with no Arch package at all
-#      (`unavailableOnArch`) and never an entry pacman already covers -- see ../lib/catalogue.nix's
-#      header for the live PATH-shadowing evidence this guards against. This is the check that was
-#      run once with the split deliberately broken (the Arch backend patched to also install every
+#      (`unavailableOnArch`) and never an entry pacman or the AUR already covers -- see
+#      ../lib/catalogue.nix's header for the live PATH-shadowing evidence this guards against. For
+#      TODAY's real catalogue that list is empty (every entry has a live Arch source), so the claim
+#      sharpens to total: the Arch backend must install NOTHING from nixpkgs, and
+#      `archPackages ++ aurPackages` must cover the whole selection. This is the check that was run
+#      once with the split deliberately broken (the Arch backend patched to also install every
 #      `archPackages` entry from nixpkgs) to confirm it actually fails; see the commit message for
 #      that run's `nix flake check` output.
 #
@@ -157,11 +161,13 @@ let
         && !(lib.elem "ntfs-3g" policyEverything.nixfs.packageNames))
       "packageNames: ${builtins.toJSON policyEverything.nixfs.packageNames}, archPackages: ${builtins.toJSON policyEverything.nixfs.archPackages}")
 
-    # ── hfs: arch = null, so it is nixpkgs-only and absent from archPackages ────────────────
-    (check "module/hfs-is-nixpkgs-only-and-absent-from-archPackages"
-      (lib.elem "hfsprogs" policyEverything.nixfs.unavailableOnArch
-        && !(lib.elem "hfsprogs" policyEverything.nixfs.archPackages))
-      "unavailableOnArch: ${builtins.toJSON policyEverything.nixfs.unavailableOnArch}, archPackages: ${builtins.toJSON policyEverything.nixfs.archPackages}")
+    # ── hfs: AUR, not an official repo -- in aurPackages, absent from BOTH archPackages and ────
+    #        unavailableOnArch, because the AUR is a real Arch source, not a fallback to nixpkgs.
+    (check "module/hfs-is-aur-covered-not-official-repo-not-nixpkgs-only"
+      (lib.elem "hfsprogs" policyEverything.nixfs.aurPackages
+        && !(lib.elem "hfsprogs" policyEverything.nixfs.archPackages)
+        && !(lib.elem "hfsprogs" policyEverything.nixfs.unavailableOnArch))
+      "aurPackages: ${builtins.toJSON policyEverything.nixfs.aurPackages}, archPackages: ${builtins.toJSON policyEverything.nixfs.archPackages}, unavailableOnArch: ${builtins.toJSON policyEverything.nixfs.unavailableOnArch}")
 
     # ── a normal entry is the mirror image: in archPackages, never in the nixpkgs-only list ──
     (check "module/an-ordinary-entry-is-arch-covered-not-nixpkgs-only"
@@ -178,10 +184,10 @@ let
       "an entry's name appeared both among arch-covered entries and in unavailableOnArch")
 
     # ── omit reaches BOTH channels for the entry it names, whichever channel that entry uses ─
-    (check "module/omit-removes-a-nixpkgs-only-entry-from-both-its-lists"
+    (check "module/omit-removes-an-aur-covered-entry-from-both-its-lists"
       (!(lib.elem "hfsprogs" policyOmitHfs.nixfs.packageNames)
-        && !(lib.elem "hfsprogs" policyOmitHfs.nixfs.unavailableOnArch))
-      "packageNames: ${builtins.toJSON policyOmitHfs.nixfs.packageNames}, unavailableOnArch: ${builtins.toJSON policyOmitHfs.nixfs.unavailableOnArch}")
+        && !(lib.elem "hfsprogs" policyOmitHfs.nixfs.aurPackages))
+      "packageNames: ${builtins.toJSON policyOmitHfs.nixfs.packageNames}, aurPackages: ${builtins.toJSON policyOmitHfs.nixfs.aurPackages}")
 
     (check "module/omit-removes-an-arch-covered-entry-from-both-its-lists"
       (!(lib.elem "ntfs3g" policyOmitNtfs.nixfs.packageNames)
@@ -203,6 +209,25 @@ let
     (check "catalogue/every-entry-has-a-nixpkgs-name"
       (lib.all (t: t.nixpkgs != null) allCatalogueEntries)
       "catalogue has an entry with no nixpkgs name at all")
+
+    # ── claim 4, sharpened for TODAY's catalogue: every entry has a live Arch source ────────
+    # (official repo or AUR), so nothing needs to fall back to nixpkgs on an Arch host at all.
+    # This is a fact about the current catalogue, not about the resolution mechanism -- the
+    # mechanism keeping `arch = null` alive is proven separately, by fixture, in `resolveChecks`.
+    (check "catalogue/every-entry-has-a-live-arch-source-today"
+      (policyEverything.nixfs.unavailableOnArch == [ ])
+      "unavailableOnArch: ${builtins.toJSON policyEverything.nixfs.unavailableOnArch} -- an entry has neither an official-repo nor an AUR package")
+
+    # ── archPackages ++ aurPackages therefore covers the WHOLE selection, entry for entry ────
+    (check "module/arch-and-aur-together-cover-the-whole-catalogue-today"
+      (
+        let
+          archCoveredNames = map (t: t.name) (lib.filter (t: t.arch != null) policyEverything.nixfs.want);
+          allNames = map (t: t.name) policyEverything.nixfs.want;
+        in
+        sorted archCoveredNames == sorted allNames
+      )
+      "an entry in nixfs.want has no Arch source (official repo or AUR) even though unavailableOnArch is empty")
   ];
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -386,11 +411,25 @@ let
       "nixfs.enable = false still installed the toolchain")
 
     # --- 6. THE anti-shadowing property: the Arch backend installs from nixpkgs ONLY the -----
-    #        entries Arch has nothing for, and never an entry pacman already covers. This is the
-    #        check that fails when the split is broken -- see this file's own header. Containment
-    #        for the "installs" half, not exact equality: system-manager's own baseline
-    #        (bash-interactive, nologin, ...) is in environment.systemPackages too and has nothing
-    #        to do with nixfs.
+    #        entries Arch has nothing for at all, and never an entry pacman or the AUR already
+    #        covers. This is the check that fails when the split is broken -- see this file's own
+    #        header. For today's real catalogue that sharpens to an absolute: unavailableOnArch is
+    #        empty (every entry has a live Arch source), so NO nixfs package should be installed
+    #        from nixpkgs on an Arch host at all.
+    (check "install/arch-backend-installs-nothing-from-nixpkgs-today"
+      (
+        let
+          smInstalledOutPaths = map (p: p.outPath) sm-everything.environment.systemPackages;
+          nixfsOutPaths = map outPathOf sm-everything.nixfs.packageNames;
+        in
+        lib.intersectLists nixfsOutPaths smInstalledOutPaths == [ ]
+      )
+      "the arch backend installed at least one nixfs package from nixpkgs, but every entry in today's catalogue has a live Arch source (official repo or AUR)")
+
+    # The general mechanism, kept alongside the sharpened claim above: whatever ends up in
+    # unavailableOnArch (empty today, real for a fixture in resolveChecks) is exactly what gets
+    # installed from nixpkgs -- containment, not exact equality, since system-manager's own
+    # baseline (bash-interactive, nologin, ...) is in environment.systemPackages too.
     (check "install/arch-backend-installs-every-nixpkgs-only-entry"
       (
         let installedOutPaths = map (p: p.outPath) sm-everything.environment.systemPackages;
@@ -398,16 +437,20 @@ let
       )
       "arch backend did not install every unavailableOnArch entry")
 
-    (check "install/arch-backend-never-installs-an-entry-pacman-already-has"
+    (check "install/arch-backend-never-installs-an-entry-pacman-or-the-aur-already-has"
       (
         let
           smInstalledOutPaths = map (p: p.outPath) sm-everything.environment.systemPackages;
-          archCoveredNixpkgsNames =
+          archOrAurCoveredNixpkgsNames =
             lib.filter (n: !(lib.elem n sm-everything.nixfs.unavailableOnArch)) sm-everything.nixfs.packageNames;
         in
-        lib.all (n: !(lib.elem (outPathOf n) smInstalledOutPaths)) archCoveredNixpkgsNames
+        lib.all (n: !(lib.elem (outPathOf n) smInstalledOutPaths)) archOrAurCoveredNixpkgsNames
       )
-      "the arch backend installed a package from nixpkgs that pacman also covers")
+      "the arch backend installed a package from nixpkgs that pacman or the AUR already covers")
+
+    (check "install/arch-backend-publishes-aurPackages-for-hfsprogs"
+      (lib.elem "hfsprogs" sm-everything.nixfs.aurPackages)
+      "aurPackages: ${builtins.toJSON sm-everything.nixfs.aurPackages}")
 
     (check "install/arch-backend-publishes-archPackages-for-a-normal-entry"
       (lib.elem "e2fsprogs" sm-everything.nixfs.archPackages)

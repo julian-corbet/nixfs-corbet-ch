@@ -185,11 +185,10 @@ in
 
           nixarch.packages.aur = config.nixfs.aurPackages;
 
-        Empty today: nothing in ../lib/catalogue.nix is AUR-only yet (hfsprogs, the one entry with
-        no Arch package at all, comes from nixpkgs instead -- see `unavailableOnArch`). Kept as its
-        own option anyway, for the same reason the sibling nixdev/nixoffice catalogues keep it
-        separate from `archPackages`: the day an entry does need the AUR, the option surface should
-        not be a surprise.
+        AUR is a real Arch source here, not a fallback to nixpkgs: `hfsprogs` is AUR-only
+        (`paru -Si hfsprogs` -> `Repository: aur`) and is installed from the AUR on an Arch host,
+        never from nixpkgs -- the same `aur = true` mechanism the sibling nixdev catalogue's `kind`
+        entry already uses.
       '';
     };
 
@@ -197,10 +196,16 @@ in
       type = lib.types.listOf lib.types.str;
       readOnly = true;
       description = ''
-        Selected entries with no Arch package at all, named by nixpkgs attribute name (this
-        catalogue's identity for every entry). Surfaced rather than silently handled, so it is
-        visible which entries a non-NixOS host still gets from nixpkgs and why: see
-        ../modules/arch.nix, which installs exactly this list from nixpkgs and nothing more.
+        Selected entries with no Arch package at all -- neither an official repo nor the AUR --
+        named by nixpkgs attribute name (this catalogue's identity for every entry). Surfaced
+        rather than silently handled, so it is visible which entries a non-NixOS host still gets
+        from nixpkgs and why: see ../modules/arch.nix, which installs exactly this list from
+        nixpkgs and nothing more.
+
+        Empty for the current catalogue: every entry today has a live Arch source, official repo
+        or AUR (see ../lib/catalogue.nix's header). The mechanism stays -- a future filesystem tool
+        may genuinely exist nowhere on Arch -- but nothing exercises it today outside a test
+        fixture.
       '';
     };
   };

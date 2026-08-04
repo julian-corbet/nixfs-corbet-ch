@@ -5,15 +5,17 @@
 # WHY THESE ARE NOT INLINE IN modules/nixfs.nix, the same reasoning as the sibling nixoffice's
 # version of this file: inline, the only input they could ever be tested against is the REAL
 # catalogue in ../lib/catalogue.nix, which is a table of what happens to be selected today, not a
-# set of fixtures chosen to exercise every branch. ../checks/default.nix drives these with fixture
-# entries the real catalogue does not happen to contain -- an `aur = true` entry, for instance,
-# which nixfs's own catalogue has no live example of yet.
+# set of fixtures chosen to exercise every branch. ../lib/catalogue.nix does have a live `aur = true`
+# entry today (`hfsprogs`), but it has no live `arch = null` entry -- every catalogue member has a
+# real Arch source, official repo or AUR -- so ../checks/default.nix still drives that branch with
+# a fixture rather than a real one.
 #
 # ONLY TWO CHANNELS HERE, unlike nixoffice's three: nixfs has no Flatpak-equivalent third delivery
 # path, so there is no `flatpakApps` to write. Every entry in ../lib/catalogue.nix carries a
 # `nixpkgs` name (nixfs has no channel-less entry, unlike nixoffice's DieBahn), so there is also no
 # `unavailableOnNixos` here -- the direction that matters for THIS catalogue is the other one: which
-# entries have no Arch package at all, and must come from nixpkgs even on a non-NixOS host.
+# entries have no Arch package at all (official repo OR AUR), and must come from nixpkgs even on a
+# non-NixOS host.
 #
 # EVERY ARCH FIELD IS INDEPENDENTLY NULLABLE, which is the rule the functions below are written
 # around: an entry may have a pacman name, or none at all (`arch = null`) where Arch offers nothing.
