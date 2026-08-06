@@ -5,9 +5,9 @@
 # derive it -- what a host MOUNTS is already handled by NixOS, and what it MEETS is a property of
 # what people plug into it, which no config can see.
 #
-# `tools` is not a per-host fact -- ddrescue, smartctl, parted, pv are generic storage toolkit, not
-# tied to any filesystem or machine role, so groups default ON; a host that genuinely cannot use
-# one turns it off and says why.
+# `tools` is not a per-host fact -- ddrescue, smartctl, parted, pv, and fsarchiver are generic
+# storage toolkit, not tied to any filesystem or machine role, so groups default ON; a host that
+# genuinely cannot use one turns it off and says why.
 #
 # TWO COLUMNS, NOT ONE. Every entry below names itself twice, `arch` and `nixpkgs`, the same shape
 # as the sibling nixdev/nixoffice catalogues -- which this one used to argue against. The header
@@ -255,6 +255,17 @@
         retries only what the first could not read. testdisk recovers partition tables and boot
         sectors; photorec (same package) carves files by signature when the filesystem itself is
         gone. Neither has anything to do with which filesystem is on the device.
+      '';
+    };
+
+    archiving = {
+      packages.fsarchiver = { arch = "fsarchiver"; nixpkgs = "fsarchiver"; };
+      summary = "create and restore portable filesystem archives";
+      detail = ''
+        fsarchiver saves a mounted filesystem as a portable archive and restores it onto another
+        filesystem without requiring a block-for-block clone. It complements, rather than replaces,
+        native snapshot replication: btrfs and ZFS snapshots remain the right backup transport for
+        filesystems those hosts own.
       '';
     };
 

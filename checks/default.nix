@@ -355,6 +355,10 @@ let
       (sorted cfg-bare.nixfs.packageNames == sorted allToolPackages)
       "got: ${builtins.toJSON (sorted cfg-bare.nixfs.packageNames)}, expected exactly the tool groups: ${builtins.toJSON (sorted allToolPackages)}")
 
+    (check "defaults/fsarchiver-is-in-the-generic-toolkit"
+      (lib.elem "fsarchiver" cfg-bare.nixfs.packageNames && lib.elem "fsarchiver" sm-everything.nixfs.archPackages)
+      "NixOS packages: ${builtins.toJSON cfg-bare.nixfs.packageNames}, Arch packages: ${builtins.toJSON sm-everything.nixfs.archPackages}")
+
     # ...and NO filesystem userland, because which formats a host deals with cannot be guessed.
     (check "defaults/bare-enable-gives-no-filesystem-userland"
       (!(lib.any (p: lib.elem p allFsPackages) cfg-bare.nixfs.packageNames))
