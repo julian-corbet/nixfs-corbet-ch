@@ -312,15 +312,16 @@
       packages = {
         lvm2 = { arch = "lvm2"; nixpkgs = "lvm2"; };
         mdadm = { arch = "mdadm"; nixpkgs = "mdadm"; };
-        cryptsetup = { arch = "cryptsetup"; nixpkgs = "cryptsetup"; };
       };
       summary = "open the block layers between a disk and its filesystem";
       detail = ''
-        A foreign disk whose ext4 lives inside an LVM volume group inside a LUKS container is
-        unreadable until all three are open, and only the last of those three is a filesystem
-        question. vgchange -ay activates a foreign volume group, mdadm --assemble brings up a
-        foreign MD array, cryptsetup luksDump/luksOpen handles the encryption -- and luksHeaderBackup
-        is what you want before touching any of it.
+        A foreign disk whose ext4 lives inside an LVM volume group is unreadable until vgchange -ay
+        activates that foreign volume group; mdadm --assemble does the same for a foreign MD array.
+
+        cryptsetup is deliberately absent from this group: it is the LUKS tool, nixluks is the LUKS
+        repo, and it is already that repo's own tooling default (`nixluks.tooling`, which defaults
+        to `[ "cryptsetup" ]`) -- nixfs is filesystems generally and has no better claim to it than
+        the repo that exists specifically for encrypted volumes.
       '';
     };
 

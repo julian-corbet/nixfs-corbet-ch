@@ -78,7 +78,7 @@ question a host answers is not *do I want this* but *can I actually use it*.
 | `archiving` | create and restore portable filesystem archives | fsarchiver |
 | `inspection` | ask the hardware what it thinks | smartmontools, hdparm, sdparm, nvme-cli, lsscsi, sg3_utils, pciutils |
 | `partitioning` | read, edit and back up partition tables | gptfdisk, parted |
-| `volumes` | open the block layers between a disk and its filesystem | lvm2, mdadm, cryptsetup |
+| `volumes` | open the block layers between a disk and its filesystem | lvm2, mdadm |
 | `throughput` | see a long operation move, and measure what a drive really does | pv, fio |
 
 Turn one off where the answer is genuinely no — a container with no block
