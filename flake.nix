@@ -12,7 +12,20 @@
   outputs = { self, nixpkgs, system-manager }:
     let
       lib = nixpkgs.lib;
-      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      # ONLY THE SYSTEM THESE CHECKS CAN GENUINELY BE BUILT ON, which is the narrower claim and the
+      # honest one. Every check below is a real derivation, and an aarch64-linux derivation cannot
+      # be built by an x86_64 runner, so declaring aarch64 bought no coverage whatsoever: a bare
+      # `nix flake check` answered with "The check omitted these incompatible systems:
+      # aarch64-linux" and exited 0, and CI reported green having evaluated half of what this flake
+      # claimed -- including the both-channels guard this repo says CI enforces.
+      #
+      # Keeping aarch64 and dropping `--all-systems` is the worse trade and the one this family
+      # refuses. Narrow the claim, keep the check strict -- see .github/workflows/ci.yml.
+      #
+      # Nothing else narrows: the modules take `pkgs` from the consuming evaluation and the
+      # catalogue is plain data, so a consumer resolves this on whatever platform it runs. Only
+      # `checks` and `formatter` were ever system-scoped here.
+      supportedSystems = [ "x86_64-linux" ];
       forAllSystems = lib.genAttrs supportedSystems;
       pkgsFor = system: import nixpkgs { inherit system; };
     in
